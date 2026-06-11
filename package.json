@@ -1,0 +1,38 @@
+{
+  "name": "gst-filing-status-checker",
+  "version": "1.0.0",
+  "description": "GST Filing Status Checker Desktop App",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.gst.filingstatuschecker",
+    "productName": "GST Filing Status Checker",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.9",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^28.2.0",
+    "electron-builder": "^24.9.1"
+  },
+  "allowScripts": {
+    "electron@28.3.3": true
+  }
+}
