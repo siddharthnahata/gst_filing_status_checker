@@ -8,7 +8,7 @@
 </head>
 <body>
 
-<!-- ── Header ──────────────────────────────────────────────────────────── -->
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
 <header class="app-header">
   <h1>GST Filing Status Checker</h1>
   <span class="badge">v1.0.0</span>
@@ -19,208 +19,309 @@
   </div>
 </header>
 
-<!-- ── Body ────────────────────────────────────────────────────────────── -->
-<div class="app-body">
-
-  <!-- LEFT: Config Panel -->
-  <div class="config-panel">
-
-    <!-- API Settings -->
-    <section class="card">
-      <h2><span class="icon">🔌</span> API Settings</h2>
-      <div class="form-group">
-        <label>API Base URL</label>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <input type="text" id="endpoint" placeholder="http://80.225.254.16:3010" autocomplete="off" spellcheck="false" style="flex:1;">
-          <button class="btn-secondary" id="healthBtn" title="Test connectivity" style="flex-shrink:0;white-space:nowrap;">Test ⚡</button>
-        </div>
-        <div id="healthStatus" class="hidden" style="margin-top:5px;font-size:11.5px;padding:4px 8px;border-radius:4px;"></div>
-      </div>
-      <div class="form-group">
-        <label>API Key <span style="color:var(--text-light);font-weight:400;">(x-api-key header)</span></label>
-        <input type="password" id="apiKey" placeholder="Paste API key here" autocomplete="new-password" spellcheck="false">
-      </div>
-      <div class="form-group">
-        <label>Username (GST Portal User ID)</label>
-        <input type="text" id="username" placeholder="e.g. CA_username" autocomplete="off">
-      </div>
-      <div class="form-group">
-        <label>Password</label>
-        <input type="password" id="password" placeholder="Portal password" autocomplete="new-password">
-      </div>
-    </section>
-
-    <!-- Input File -->
-    <section class="card">
-      <h2><span class="icon">📂</span> Input File</h2>
-      <div class="form-group">
-        <label>CSV or Excel file with a <strong>GSTIN</strong> column (optional: Email/Mail column)</label>
-        <div class="file-picker">
-          <input type="text" id="filePath" readonly placeholder="No file selected…">
-          <button class="btn-secondary" id="browseBtn">Browse</button>
-        </div>
-      </div>
-      <div id="fileInfo" class="file-info hidden"></div>
-    </section>
-
-    <!-- Query Parameters -->
-    <section class="card">
-      <h2><span class="icon">📅</span> Query Parameters</h2>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Month</label>
-          <select id="month">
-            <option value="January">January</option>
-            <option value="February">February</option>
-            <option value="March">March</option>
-            <option value="April">April</option>
-            <option value="May" selected>May</option>
-            <option value="June">June</option>
-            <option value="July">July</option>
-            <option value="August">August</option>
-            <option value="September">September</option>
-            <option value="October">October</option>
-            <option value="November">November</option>
-            <option value="December">December</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Year</label>
-          <select id="year"></select>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Return Type</label>
-        <select id="returnType">
-          <option value="GSTR1">GSTR1</option>
-          <option value="GSTR3B">GSTR3B</option>
-          <option value="GSTR9">GSTR9 (Annual)</option>
-          <option value="GSTR4">GSTR4 (Composition)</option>
-        </select>
-      </div>
-      <div class="text-muted" id="fyDisplay" style="margin-top:6px;"></div>
-    </section>
-
-    <!-- SMTP Settings -->
-    <section class="card">
-      <h2><span class="icon">✉️</span> Email Defaulters (SMTP)</h2>
-      <div class="smtp-note">
-        Leave blank to skip emailing. Use <code>{gstin}</code>, <code>{period}</code>, <code>{returnType}</code>
-        as placeholders in Subject/Body. For Gmail, use an App Password (16-char, 2FA required).
-      </div>
-      <div class="form-row-3">
-        <div class="form-group">
-          <label>SMTP Host</label>
-          <input type="text" id="smtpHost" placeholder="smtp.gmail.com">
-        </div>
-        <div class="form-group">
-          <label>Port</label>
-          <input type="number" id="smtpPort" value="465" min="1" max="65535">
-        </div>
-        <div class="form-group">
-          <label>Security</label>
-          <select id="smtpSecure">
-            <option value="465">SSL (465)</option>
-            <option value="587">TLS (587)</option>
-            <option value="25">Plain (25)</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>SMTP User</label>
-          <input type="text" id="smtpUser" placeholder="you@gmail.com">
-        </div>
-        <div class="form-group">
-          <label>App Password</label>
-          <input type="password" id="smtpPass" placeholder="16-char app password">
-        </div>
-      </div>
-      <div class="form-group">
-        <label>From Address</label>
-        <input type="text" id="smtpFrom" placeholder="Your Name &lt;you@gmail.com&gt;">
-      </div>
-      <div class="form-group">
-        <label>Subject</label>
-        <input type="text" id="emailSubject" placeholder="GST Filing Reminder — {gstin} — {period}">
-      </div>
-      <div class="form-group">
-        <label>Body</label>
-        <textarea id="emailBody" rows="4" placeholder="Dear Taxpayer,&#10;&#10;Your {returnType} return for {period} has not been filed as per the GST portal.&#10;&#10;GSTIN: {gstin}&#10;&#10;Please file at the earliest."></textarea>
-      </div>
-    </section>
-
-    <!-- Run controls -->
-    <div style="display:flex;gap:8px;">
-      <button class="btn-primary btn-lg" id="runBtn" style="flex:1;">
-        ▶ Login &amp; Run
-      </button>
-      <button class="btn-danger" id="stopBtn" disabled style="padding:10px 18px;">Stop</button>
+<!-- ── Shared API Bar ──────────────────────────────────────────────────────── -->
+<div class="api-bar">
+  <div class="api-bar-field api-bar-endpoint">
+    <label>API Endpoint</label>
+    <div class="api-bar-input-wrap">
+      <input type="text" id="endpoint" placeholder="http://80.225.254.16:3010" autocomplete="off" spellcheck="false">
+      <button class="btn-secondary api-test-btn" id="healthBtn">Test ⚡</button>
     </div>
+    <div id="healthStatus" class="health-status hidden"></div>
+  </div>
+  <div class="api-bar-field">
+    <label>API Key <span class="label-hint">(x-api-key)</span></label>
+    <input type="password" id="apiKey" placeholder="Paste API key" autocomplete="new-password" spellcheck="false">
+  </div>
+</div>
 
-  </div><!-- /config-panel -->
+<!-- ── Tab Bar ─────────────────────────────────────────────────────────────── -->
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="tab-checker">📋 Filing Status Check</button>
+  <button class="tab-btn" data-tab="tab-download">📄 Download Return (PDF)</button>
+</div>
 
-  <!-- RIGHT: Progress Panel -->
-  <div class="progress-panel">
+<!-- ── Tab Panels ──────────────────────────────────────────────────────────── -->
+<div class="tab-panels">
 
-    <!-- Captcha -->
-    <section class="card captcha-section hidden" id="captchaSection">
-      <h2><span class="icon">🔐</span> Captcha Verification</h2>
-      <div class="captcha-img-wrap">
-        <img id="captchaImg" src="" alt="CAPTCHA">
-      </div>
-      <div class="captcha-input-row">
-        <input type="text" id="captchaInput" placeholder="Type captcha here…" autocomplete="off" spellcheck="false">
-        <button class="btn-warning" id="captchaSubmitBtn">Submit</button>
-        <button class="btn-secondary" id="captchaRefreshBtn" title="Refresh captcha image">↺</button>
-      </div>
-      <div id="captchaError" class="captcha-error hidden"></div>
-    </section>
+  <!-- ── TAB 1: Filing Status Checker ─────────────────────────────────────── -->
+  <div class="tab-panel active" id="tab-checker">
+    <div class="panel-body">
 
-    <!-- Progress -->
-    <section class="card" id="progressCard">
-      <h2><span class="icon">⚡</span> Progress</h2>
-      <div class="progress-bar-wrap">
-        <div class="progress-bar" id="progressBar"></div>
-      </div>
-      <div class="progress-text">
-        <span id="progressLabel">Ready — configure settings and press Login &amp; Run</span>
-        <span id="progressPct"></span>
-      </div>
-      <div class="summary-counts hidden" id="summaryCounts"></div>
-      <div class="log" id="log"></div>
-    </section>
+      <!-- Left: Config -->
+      <div class="config-panel">
 
-    <!-- Results -->
-    <section class="card hidden" id="resultsSection">
-      <div class="results-header">
-        <h2><span class="icon">📊</span> Results</h2>
-        <div class="results-actions">
-          <button class="btn-success" id="saveExcelBtn">💾 Save Excel</button>
-          <button class="btn-primary" id="sendEmailBtn">📧 Send Emails</button>
+        <section class="card">
+          <h2><span class="icon">👤</span> Portal Login</h2>
+          <div class="form-group">
+            <label>Username (CA's GST Portal User ID)</label>
+            <input type="text" id="username" placeholder="e.g. CA_username" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="password" placeholder="Portal password" autocomplete="new-password">
+          </div>
+        </section>
+
+        <section class="card">
+          <h2><span class="icon">📂</span> Input File</h2>
+          <div class="form-group">
+            <label>CSV or Excel — needs <strong>GSTIN</strong> column (optional: Email/Mail)</label>
+            <div class="file-picker">
+              <input type="text" id="filePath" readonly placeholder="No file selected…">
+              <button class="btn-secondary" id="browseBtn">Browse</button>
+            </div>
+          </div>
+          <div id="fileInfo" class="file-info hidden"></div>
+        </section>
+
+        <section class="card">
+          <h2><span class="icon">📅</span> Query Parameters</h2>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Month</label>
+              <select id="month">
+                <option value="January">January</option>
+                <option value="February">February</option>
+                <option value="March">March</option>
+                <option value="April">April</option>
+                <option value="May" selected>May</option>
+                <option value="June">June</option>
+                <option value="July">July</option>
+                <option value="August">August</option>
+                <option value="September">September</option>
+                <option value="October">October</option>
+                <option value="November">November</option>
+                <option value="December">December</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Year</label>
+              <select id="year"></select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Return Type</label>
+            <select id="returnType">
+              <option value="GSTR1">GSTR1</option>
+              <option value="GSTR3B">GSTR3B</option>
+              <option value="GSTR9">GSTR9 (Annual)</option>
+              <option value="GSTR4">GSTR4 (Composition)</option>
+            </select>
+          </div>
+          <div class="text-muted" id="fyDisplay" style="margin-top:6px;"></div>
+        </section>
+
+        <section class="card">
+          <h2><span class="icon">✉️</span> Email Defaulters (SMTP)</h2>
+          <div class="smtp-note">
+            Leave blank to skip. Placeholders: <code>{gstin}</code> <code>{period}</code> <code>{returnType}</code>.
+            For Gmail use a 16-char App Password (requires 2FA).
+          </div>
+          <div class="form-row-3">
+            <div class="form-group">
+              <label>SMTP Host</label>
+              <input type="text" id="smtpHost" placeholder="smtp.gmail.com">
+            </div>
+            <div class="form-group">
+              <label>Port</label>
+              <input type="number" id="smtpPort" value="465" min="1" max="65535">
+            </div>
+            <div class="form-group">
+              <label>Security</label>
+              <select id="smtpSecure">
+                <option value="465">SSL (465)</option>
+                <option value="587">TLS (587)</option>
+                <option value="25">Plain (25)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>SMTP User</label>
+              <input type="text" id="smtpUser" placeholder="you@gmail.com">
+            </div>
+            <div class="form-group">
+              <label>App Password</label>
+              <input type="password" id="smtpPass" placeholder="16-char app password">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>From Address</label>
+            <input type="text" id="smtpFrom" placeholder="Your Name &lt;you@gmail.com&gt;">
+          </div>
+          <div class="form-group">
+            <label>Subject</label>
+            <input type="text" id="emailSubject" placeholder="GST Filing Reminder — {gstin} — {period}">
+          </div>
+          <div class="form-group">
+            <label>Body</label>
+            <textarea id="emailBody" rows="4" placeholder="Dear Taxpayer,&#10;&#10;Your {returnType} return for {period} has not been filed.&#10;GSTIN: {gstin}"></textarea>
+          </div>
+        </section>
+
+        <div style="display:flex;gap:8px;padding-bottom:4px;">
+          <button class="btn-primary btn-lg" id="runBtn" style="flex:1;">▶ Login &amp; Run</button>
+          <button class="btn-danger" id="stopBtn" disabled style="padding:10px 18px;">Stop</button>
         </div>
-      </div>
-      <div class="table-wrap">
-        <table id="resultsTable">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>GSTIN</th>
-              <th>Status</th>
-              <th>Date of Filing</th>
-              <th>ARN</th>
-              <th>Email</th>
-              <th>Note</th>
-            </tr>
-          </thead>
-          <tbody id="resultsTbody"></tbody>
-        </table>
-      </div>
-    </section>
 
-  </div><!-- /progress-panel -->
+      </div><!-- /config-panel -->
 
-</div><!-- /app-body -->
+      <!-- Right: Progress + Results -->
+      <div class="progress-panel">
+
+        <section class="card captcha-section hidden" id="captchaSection">
+          <h2><span class="icon">🔐</span> Captcha Verification</h2>
+          <div class="captcha-img-wrap">
+            <img id="captchaImg" src="" alt="CAPTCHA">
+          </div>
+          <div class="captcha-input-row">
+            <input type="text" id="captchaInput" placeholder="Type captcha here…" autocomplete="off" spellcheck="false">
+            <button class="btn-warning" id="captchaSubmitBtn">Submit</button>
+            <button class="btn-secondary" id="captchaRefreshBtn" title="Refresh captcha">↺</button>
+          </div>
+          <div id="captchaError" class="captcha-error hidden"></div>
+        </section>
+
+        <section class="card">
+          <h2><span class="icon">⚡</span> Progress</h2>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar" id="progressBar"></div>
+          </div>
+          <div class="progress-text">
+            <span id="progressLabel">Ready — configure settings and press Login &amp; Run</span>
+            <span id="progressPct"></span>
+          </div>
+          <div class="summary-counts hidden" id="summaryCounts"></div>
+          <div class="log" id="log"></div>
+        </section>
+
+        <section class="card hidden" id="resultsSection">
+          <div class="results-header">
+            <h2><span class="icon">📊</span> Results</h2>
+            <div class="results-actions">
+              <button class="btn-success" id="saveExcelBtn">💾 Save Excel</button>
+              <button class="btn-primary" id="sendEmailBtn">📧 Send Emails</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>GSTIN</th>
+                  <th>Status</th>
+                  <th>Date of Filing</th>
+                  <th>ARN</th>
+                  <th>Email</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody id="resultsTbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+      </div><!-- /progress-panel -->
+
+    </div><!-- /panel-body -->
+  </div><!-- /tab-checker -->
+
+
+  <!-- ── TAB 2: Download Return ────────────────────────────────────────────── -->
+  <div class="tab-panel" id="tab-download">
+    <div class="panel-body">
+
+      <!-- Left: Download Config -->
+      <div class="config-panel">
+
+        <section class="card">
+          <h2><span class="icon">👤</span> Client Account Login</h2>
+          <div class="smtp-note">
+            Log in as the <strong>client whose return you want to download</strong>.
+            This is a separate session from the Filing Status tab.
+          </div>
+          <div class="form-group">
+            <label>Username (Client's GST Portal User ID)</label>
+            <input type="text" id="dlUsername" placeholder="Client GST username" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="dlPassword" placeholder="Client portal password" autocomplete="new-password">
+          </div>
+          <div id="dlSessionStatus" class="dl-session-status inactive" style="margin-top:8px;">● No active session</div>
+        </section>
+
+        <section class="card">
+          <h2><span class="icon">📄</span> Return to Download</h2>
+          <div class="form-group">
+            <label>Return Type</label>
+            <select id="dlReturnType">
+              <option value="GSTR1">GSTR-1</option>
+              <option value="GSTR3B">GSTR-3B</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Month</label>
+              <select id="dlMonth">
+                <option value="January">January</option>
+                <option value="February">February</option>
+                <option value="March">March</option>
+                <option value="April">April</option>
+                <option value="May" selected>May</option>
+                <option value="June">June</option>
+                <option value="July">July</option>
+                <option value="August">August</option>
+                <option value="September">September</option>
+                <option value="October">October</option>
+                <option value="November">November</option>
+                <option value="December">December</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Year</label>
+              <select id="dlYear"></select>
+            </div>
+          </div>
+          <div class="text-muted" id="dlFyDisplay" style="margin-top:2px;margin-bottom:8px;"></div>
+        </section>
+
+        <div style="display:flex;gap:8px;padding-bottom:4px;">
+          <button class="btn-primary btn-lg" id="dlLoginDownloadBtn" style="flex:1;">📄 Login &amp; Download PDF</button>
+          <button class="btn-secondary" id="dlLogoutBtn" style="padding:10px 14px;" title="End client session">Logout</button>
+        </div>
+
+      </div><!-- /config-panel -->
+
+      <!-- Right: Captcha + Download Log -->
+      <div class="progress-panel">
+
+        <section class="card captcha-section hidden" id="dlCaptchaSection">
+          <h2><span class="icon">🔐</span> Captcha Verification</h2>
+          <div class="captcha-img-wrap">
+            <img id="dlCaptchaImg" src="" alt="CAPTCHA">
+          </div>
+          <div class="captcha-input-row">
+            <input type="text" id="dlCaptchaInput" placeholder="Type captcha here…" autocomplete="off" spellcheck="false">
+            <button class="btn-warning" id="dlCaptchaSubmitBtn">Submit</button>
+            <button class="btn-secondary" id="dlCaptchaRefreshBtn" title="Refresh captcha">↺</button>
+          </div>
+          <div id="dlCaptchaError" class="captcha-error hidden"></div>
+        </section>
+
+        <section class="card">
+          <h2><span class="icon">📋</span> Download Log</h2>
+          <div id="dlStatus" class="dl-status hidden" style="margin-bottom:10px;"></div>
+          <div class="log" id="dlLog"></div>
+        </section>
+
+      </div><!-- /progress-panel -->
+
+    </div><!-- /panel-body -->
+  </div><!-- /tab-download -->
+
+</div><!-- /tab-panels -->
 
 <script src="renderer.js"></script>
 </body>
