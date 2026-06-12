@@ -411,6 +411,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
 .count-chip.notfiled { background: var(--danger-bg);  color: var(--danger); }
 .count-chip.errored  { background: var(--warning-bg); color: var(--warning); }
 .count-chip.emailed  { background: var(--info-bg);    color: var(--info); }
+.count-chip.invalid  { background: #f3e8ff;           color: #7c3aed; }
 
 /* ── Log ─────────────────────────────────────────────────────────────────── */
 .log {
@@ -508,6 +509,7 @@ tr:hover td { background: var(--surface-2); }
 .status-badge.filed    { background: var(--success-bg); color: var(--success); }
 .status-badge.notfiled { background: var(--danger-bg);  color: var(--danger); }
 .status-badge.error    { background: var(--warning-bg); color: var(--warning); }
+.status-badge.invalid  { background: #f3e8ff;           color: #7c3aed; }
 
 /* ── Download panel ──────────────────────────────────────────────────────── */
 .dl-session-status {

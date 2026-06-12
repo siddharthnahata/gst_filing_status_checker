@@ -11,7 +11,7 @@
 <!-- ── Header ──────────────────────────────────────────────────────────────── -->
 <header class="app-header">
   <h1>GST Filing Status Checker</h1>
-  <span class="badge">v1.0.0</span>
+  <span class="badge">v1.1.0</span>
   <div class="header-spacer"></div>
   <div class="header-status" id="headerStatus">
     <span class="status-dot" id="statusDot"></span>
@@ -66,7 +66,7 @@
         <section class="card">
           <h2><span class="icon">📂</span> Input File</h2>
           <div class="form-group">
-            <label>CSV or Excel — needs <strong>GSTIN</strong> column (optional: Email/Mail)</label>
+            <label>CSV or Excel — needs <strong>GSTIN</strong> column (optional: Name, Email/Mail)</label>
             <div class="file-picker">
               <input type="text" id="filePath" readonly placeholder="No file selected…">
               <button class="btn-secondary" id="browseBtn">Browse</button>
@@ -103,7 +103,7 @@
           <div class="form-group">
             <label>Return Type</label>
             <select id="returnType">
-              <option value="GSTR1">GSTR1</option>
+              <option value="GSTR1">GSTR1 / GSTR1-FF</option>
               <option value="GSTR3B">GSTR3B</option>
               <option value="GSTR9">GSTR9 (Annual)</option>
               <option value="GSTR4">GSTR4 (Composition)</option>
@@ -210,6 +210,7 @@
                 <tr>
                   <th>#</th>
                   <th>GSTIN</th>
+                  <th>Name</th>
                   <th>Status</th>
                   <th>Date of Filing</th>
                   <th>ARN</th>

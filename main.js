@@ -121,6 +121,7 @@ ipcMain.handle('read-input-file', (_event, filePath) => {
     const headers = Object.keys(rawData[0]);
     const gstinCol = headers.find(h => h.trim().toLowerCase() === 'gstin');
     const emailCol = headers.find(h => ['email', 'mail', 'e-mail'].includes(h.trim().toLowerCase()));
+    const nameCol  = headers.find(h => ['name','party name','trade name','legal name','firm name','client name','taxpayer name'].includes(h.trim().toLowerCase()));
 
     if (!gstinCol) {
       return { error: `No "GSTIN" column found. Columns detected: ${headers.join(', ')}` };
@@ -130,12 +131,13 @@ ipcMain.handle('read-input-file', (_event, filePath) => {
       .map(row => ({
         gstin: String(row[gstinCol] || '').trim().toUpperCase(),
         email: emailCol ? String(row[emailCol] || '').trim() : '',
+        name:  nameCol  ? String(row[nameCol]  || '').trim() : '',
       }))
       .filter(r => r.gstin.length > 0);
 
     if (rows.length === 0) return { error: 'GSTIN column found but no values.' };
 
-    return { rows, total: rows.length, hasEmail: !!emailCol };
+    return { rows, total: rows.length, hasEmail: !!emailCol, hasName: !!nameCol };
   } catch (e) {
     return { error: `Failed to read file: ${e.message}` };
   }

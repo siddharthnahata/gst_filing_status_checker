@@ -166,6 +166,14 @@ function updateDlFYDisplay() {
   $('dlFyDisplay').textContent = `→ Financial Year: ${fy}`;
 }
 
+// ── GSTIN validator ───────────────────────────────────────────────────────────
+// 15 chars: 2-digit state + 5-letter PAN prefix + 4 digits + 1 letter + entity + Z + checksum
+const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+function isValidGSTIN(gstin) {
+  return typeof gstin === 'string' && gstin.length === 15 && GSTIN_RE.test(gstin);
+}
+
 // ── Period matching ───────────────────────────────────────────────────────────
 const MONTH_NAMES = MONTHS.map(m => m.toLowerCase());
 const MONTH_ABBR  = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
@@ -201,8 +209,10 @@ function matchesPeriod(taxp, targetMonth) {
 
 function findMatchingEntry(filingStatus, targetMonth, returnType) {
   if (!Array.isArray(filingStatus)) return null;
+  // GSTR1 filers with quarterly frequency file as GSTR1FF — match both
+  const types = returnType === 'GSTR1' ? ['GSTR1', 'GSTR1FF'] : [returnType];
   return filingStatus.flat(Infinity).find(e =>
-    e && e.rtntype === returnType && matchesPeriod(e.taxp, targetMonth) && e.status === 'Filed'
+    e && types.includes(e.rtntype) && matchesPeriod(e.taxp, targetMonth) && e.status === 'Filed'
   ) || null;
 }
 
@@ -378,7 +388,7 @@ async function reAuthenticate() {
 }
 
 // ── Batch processing ──────────────────────────────────────────────────────────
-async function processSingleGSTIN(gstin, email, financialYear, targetMonth, returnType, retryCount = 0) {
+async function processSingleGSTIN(gstin, name, email, financialYear, targetMonth, returnType, retryCount = 0) {
   const res = await window.gstApp.checkFilingStatus({
     endpoint: state.endpoint,
     apiKey:   state.apiKey,
@@ -392,27 +402,28 @@ async function processSingleGSTIN(gstin, email, financialYear, targetMonth, retu
   if (!res.ok) {
     if (retryCount < 1 && isSessionExpiredResponse(res)) {
       await reAuthenticate();
-      return processSingleGSTIN(gstin, email, financialYear, targetMonth, returnType, retryCount + 1);
+      return processSingleGSTIN(gstin, name, email, financialYear, targetMonth, returnType, retryCount + 1);
     }
-    return { gstin, email, status: 'Error', dof: '', arn: '', note: res.error || `HTTP ${res.httpStatus}` };
+    return { gstin, name, email, status: 'Error', dof: '', arn: '', note: res.error || `HTTP ${res.httpStatus}` };
   }
 
   if (retryCount < 1 && isSessionExpiredResponse(res)) {
     await reAuthenticate();
-    return processSingleGSTIN(gstin, email, financialYear, targetMonth, returnType, retryCount + 1);
+    return processSingleGSTIN(gstin, name, email, financialYear, targetMonth, returnType, retryCount + 1);
   }
 
   const d = res.data;
   const entry = findMatchingEntry(d.filingStatus, targetMonth, returnType);
 
   if (entry) {
-    return { gstin, email, status: 'Filed', dof: entry.dof || '', arn: entry.arn || '', note: '' };
+    const note = entry.rtntype === 'GSTR1FF' ? 'Filed as GSTR1-FF (Quarterly)' : '';
+    return { gstin, name, email, status: 'Filed', dof: entry.dof || '', arn: entry.arn || '', note };
   }
 
-  const topStatus    = d.status || '';
+  const topStatus     = d.status || '';
   const hasAnyRecords = Array.isArray(d.filingStatus) && d.filingStatus.flat(Infinity).length > 0;
   const note = !hasAnyRecords && topStatus.toLowerCase().includes('no records') ? 'No records on portal' : '';
-  return { gstin, email, status: 'Not Filed', dof: '', arn: '', note };
+  return { gstin, name, email, status: 'Not Filed', dof: '', arn: '', note };
 }
 
 async function runBatch() {
@@ -425,33 +436,44 @@ async function runBatch() {
 
   addLog(`─── Batch start: ${total} GSTINs | ${month} ${year} | FY ${financialYear} | ${returnType} ───`, 'step');
 
-  let filed = 0, notFiled = 0, errored = 0;
+  let filed = 0, notFiled = 0, errored = 0, invalid = 0;
   const results = [];
 
   show('summaryCounts');
-  updateSummaryCounts(0, 0, 0, 0);
+  updateSummaryCounts(0, 0, 0, 0, 0);
 
   for (let i = 0; i < rows.length; i++) {
     if (!state.isRunning) { addLog('Run stopped by user.', 'warn'); break; }
 
-    const { gstin, email } = rows[i];
+    const { gstin, email, name = '' } = rows[i];
     setProgress(i, total, `Processing ${i + 1} / ${total}: ${gstin}`);
+
+    // Validate GSTIN format before hitting the API
+    if (!isValidGSTIN(gstin)) {
+      invalid++;
+      const result = { gstin, name, email, status: 'Invalid GSTIN', dof: '', arn: '', note: `Bad format (${gstin.length} chars)` };
+      results.push(result);
+      addLog(`[${i+1}/${total}] ${gstin} → Invalid GSTIN — skipped`, 'warn');
+      appendResultRow(results.length, result);
+      updateSummaryCounts(filed, notFiled, errored, 0, invalid);
+      continue;
+    }
 
     let result;
     try {
-      result = await processSingleGSTIN(gstin, email, financialYear, month, returnType);
+      result = await processSingleGSTIN(gstin, name, email, financialYear, month, returnType);
     } catch (e) {
       if (e.name === 'ApiKeyError') throw e;
-      result = { gstin, email, status: 'Error', dof: '', arn: '', note: e.message };
+      result = { gstin, name, email, status: 'Error', dof: '', arn: '', note: e.message };
     }
 
     results.push(result);
 
-    if (result.status === 'Filed')       { filed++;    addLog(`[${i+1}/${total}] ${gstin} → Filed (${result.dof})`, 'ok'); }
+    if (result.status === 'Filed')          { filed++;    addLog(`[${i+1}/${total}] ${gstin} → Filed (${result.dof})${result.note ? ' — ' + result.note : ''}`, 'ok'); }
     else if (result.status === 'Not Filed') { notFiled++; addLog(`[${i+1}/${total}] ${gstin} → Not Filed`, 'warn'); }
-    else                                 { errored++;  addLog(`[${i+1}/${total}] ${gstin} → Error: ${result.note}`, 'error'); }
+    else                                    { errored++;  addLog(`[${i+1}/${total}] ${gstin} → Error: ${result.note}`, 'error'); }
 
-    updateSummaryCounts(filed, notFiled, errored, 0);
+    updateSummaryCounts(filed, notFiled, errored, 0, invalid);
     appendResultRow(results.length, result);
 
     if (i < rows.length - 1 && state.isRunning) {
@@ -471,11 +493,12 @@ async function runBatch() {
 function appendResultRow(n, r) {
   show('resultsSection');
   const tr = document.createElement('tr');
-  const badgeClass = r.status === 'Filed' ? 'filed' : r.status === 'Not Filed' ? 'notfiled' : 'error';
-  const icon = r.status === 'Filed' ? '✓' : r.status === 'Not Filed' ? '✗' : '⚠';
+  const badgeClass = r.status === 'Filed' ? 'filed' : r.status === 'Not Filed' ? 'notfiled' : r.status === 'Invalid GSTIN' ? 'invalid' : 'error';
+  const icon = r.status === 'Filed' ? '✓' : r.status === 'Not Filed' ? '✗' : r.status === 'Invalid GSTIN' ? '⊘' : '⚠';
   tr.innerHTML = `
     <td>${n}</td>
     <td style="font-family:var(--font-mono);font-size:12px;">${escHtml(r.gstin)}</td>
+    <td style="font-size:12px;">${escHtml(r.name || '')}</td>
     <td><span class="status-badge ${badgeClass}">${icon} ${escHtml(r.status)}</span></td>
     <td>${escHtml(r.dof)}</td>
     <td style="font-size:11px;">${escHtml(r.arn)}</td>
@@ -490,12 +513,13 @@ function clearResultsTable() {
   hide('resultsSection');
 }
 
-function updateSummaryCounts(filed, notFiled, errored, emailed) {
+function updateSummaryCounts(filed, notFiled, errored, emailed, invalid = 0) {
   $('summaryCounts').innerHTML = `
     <span class="count-chip filed">✓ ${filed} Filed</span>
     <span class="count-chip notfiled">✗ ${notFiled} Not Filed</span>
-    ${errored ? `<span class="count-chip errored">⚠ ${errored} Error</span>` : ''}
-    ${emailed ? `<span class="count-chip emailed">✉ ${emailed} Emailed</span>` : ''}
+    ${errored  ? `<span class="count-chip errored">⚠ ${errored} Error</span>`          : ''}
+    ${invalid  ? `<span class="count-chip invalid">⊘ ${invalid} Invalid GSTIN</span>`  : ''}
+    ${emailed  ? `<span class="count-chip emailed">✉ ${emailed} Emailed</span>`         : ''}
   `;
 }
 
@@ -629,6 +653,7 @@ $('saveExcelBtn').addEventListener('click', async () => {
 
   const excelData = state.results.map(r => ({
     'GSTIN':          r.gstin,
+    'Name':           r.name  || '',
     'Status':         r.status,
     'Date of Filing': r.dof,
     'ARN':            r.arn,
@@ -1008,9 +1033,10 @@ $('browseBtn').addEventListener('click', async () => {
     state.inputRows = [];
   } else {
     state.inputRows = result.rows;
-    const emailNote = result.hasEmail ? ' · Email column found ✓' : ' · No email column';
-    fileInfo.textContent = `✓ ${result.total} GSTINs loaded${emailNote}`;
-    addLog(`File loaded: ${result.total} GSTINs${result.hasEmail ? ' (with email)' : ''} — ${filePath}`, 'ok');
+    const nameNote  = result.hasName  ? ' · Name ✓'  : '';
+    const emailNote = result.hasEmail ? ' · Email ✓' : '';
+    fileInfo.textContent = `✓ ${result.total} GSTINs loaded${nameNote}${emailNote}`;
+    addLog(`File loaded: ${result.total} GSTINs${result.hasName ? ' (with name)' : ''}${result.hasEmail ? ' (with email)' : ''} — ${filePath}`, 'ok');
   }
 });
 
