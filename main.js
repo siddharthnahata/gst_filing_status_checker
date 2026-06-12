@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const xlsx = require('xlsx');
 const nodemailer = require('nodemailer');
+const JSZip = require('jszip');
 
 let mainWindow;
 
@@ -270,6 +271,26 @@ ipcMain.handle('save-pdf', async (_event, { base64, defaultName }) => {
   try {
     fs.writeFileSync(result.filePath, Buffer.from(base64, 'base64'));
     return { ok: true, filePath: result.filePath };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('save-zip', async (_event, { files, defaultName }) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save Bulk Download ZIP',
+    defaultPath: defaultName || 'returns.zip',
+    filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+  });
+  if (result.canceled) return { canceled: true };
+  try {
+    const zip = new JSZip();
+    for (const { name, base64 } of files) {
+      zip.file(name, Buffer.from(base64, 'base64'));
+    }
+    const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    fs.writeFileSync(result.filePath, buf);
+    return { ok: true, filePath: result.filePath, count: files.length };
   } catch (e) {
     return { ok: false, error: e.message };
   }

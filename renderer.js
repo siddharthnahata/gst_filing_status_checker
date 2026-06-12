@@ -18,6 +18,7 @@ const state = {
   dlSessionId:      null,
   dlCaptchaResolve: null,
   dlCaptchaReject:  null,
+  dlBulkRunning:    false,
 };
 
 // ── API key error helpers ─────────────────────────────────────────────────────
@@ -975,6 +976,180 @@ $('dlLoginDownloadBtn').addEventListener('click', async () => {
   }
 });
 
+// ── Bulk download helpers ─────────────────────────────────────────────────────
+function getMonthRange(startMonth, startYear, endMonth, endYear) {
+  const periods = [];
+  let m = MONTHS.indexOf(startMonth);
+  let y = startYear;
+  const eM = MONTHS.indexOf(endMonth);
+  const eY  = endYear;
+  if (y > eY || (y === eY && m > eM)) return periods; // invalid range
+  while (y < eY || (y === eY && m <= eM)) {
+    periods.push({ month: MONTHS[m], year: y });
+    m++;
+    if (m >= 12) { m = 0; y++; }
+  }
+  return periods;
+}
+
+function setBulkProgress(done, total, label) {
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const bar  = $('dlBulkProgressBar');
+  bar.style.width = `${pct}%`;
+  bar.className   = 'progress-bar' + (done === total && total > 0 ? ' complete' : '');
+  $('dlBulkProgressLabel').textContent = label || `${done} / ${total}`;
+  $('dlBulkProgressPct').textContent   = total > 0 ? `${pct}%` : '';
+}
+
+function updateBulkCounts(downloaded, notFiled, failed) {
+  $('dlBulkCounts').innerHTML = `
+    <span class="count-chip filed">✓ ${downloaded} Downloaded</span>
+    <span class="count-chip notfiled">✗ ${notFiled} Not Filed</span>
+    ${failed ? `<span class="count-chip errored">⚠ ${failed} Failed</span>` : ''}
+  `;
+}
+
+// ── Bulk Download button ──────────────────────────────────────────────────────
+$('dlBulkDownloadBtn').addEventListener('click', async () => {
+  if (!val('endpoint')) { alert('Enter the API Base URL in the top bar.'); return; }
+
+  const startMonth = $('dlBulkStartMonth').value;
+  const startYear  = parseInt($('dlBulkStartYear').value);
+  const endMonth   = $('dlBulkEndMonth').value;
+  const endYear    = parseInt($('dlBulkEndYear').value);
+  const returnType = $('dlBulkReturnType').value;
+
+  const periods = getMonthRange(startMonth, startYear, endMonth, endYear);
+  if (!periods.length) { alert('Invalid date range — "From" must be before or equal to "To".'); return; }
+
+  state.endpoint = val('endpoint').replace(/\/+$/, '');
+  state.apiKey   = $('apiKey').value.trim() || null;
+  state.dlBulkRunning = true;
+
+  $('dlBulkDownloadBtn').disabled = true;
+  $('dlLoginDownloadBtn').disabled = true;
+  $('dlLogoutBtn').disabled = true;
+  $('dlBulkStopBtn').disabled = false;
+
+  show('dlBulkProgressCard');
+  setBulkProgress(0, periods.length, `0 / ${periods.length} — Starting…`);
+  updateBulkCounts(0, 0, 0);
+  addDlLog(`─── Bulk download: ${periods.length} periods | ${returnType} ───`, 'step');
+
+  try {
+    // Login if needed
+    if (!state.dlSessionId) {
+      if (!val('dlUsername') || !$('dlPassword').value) {
+        alert('Enter the client username and password first.');
+        return;
+      }
+      addDlLog('Checking endpoint…', 'step');
+      const health = await window.gstApp.healthCheck({ endpoint: state.endpoint });
+      if (!health.ok) throw new Error(`Cannot reach API — ${health.error || `HTTP ${health.httpStatus}`}`);
+      await doDownloadLogin();
+    }
+
+    const collected = [];
+    let downloaded = 0, notFiled = 0, failed = 0;
+
+    for (let i = 0; i < periods.length; i++) {
+      if (!state.dlBulkRunning) { addDlLog('Bulk download stopped by user.', 'warn'); break; }
+
+      const { month, year } = periods[i];
+      const financialYear   = getDownloadFY(month, year);
+      const returnPeriod    = getReturnPeriod(month, year);
+      const periodLabel     = `${month} ${year}`;
+      const monthAbbr       = month.slice(0, 3);
+
+      setBulkProgress(i, periods.length, `${i + 1} / ${periods.length} — ${periodLabel}`);
+      addDlLog(`[${i+1}/${periods.length}] ${returnType} ${periodLabel}…`, 'info');
+
+      let res = await window.gstApp.downloadPdf({
+        endpoint: state.endpoint, apiKey: state.apiKey,
+        sessionId: state.dlSessionId, returnType, financialYear, returnPeriod,
+      });
+
+      throwIfApiKeyError(res);
+
+      // One-shot re-auth on session expiry
+      if (!res.ok && isSessionExpiredResponse(res)) {
+        addDlLog('Session expired — re-authenticating…', 'warn');
+        state.dlSessionId = null;
+        updateDlSessionStatus();
+        await doDownloadLogin();
+        res = await window.gstApp.downloadPdf({
+          endpoint: state.endpoint, apiKey: state.apiKey,
+          sessionId: state.dlSessionId, returnType, financialYear, returnPeriod,
+        });
+        throwIfApiKeyError(res);
+      }
+
+      const d = res.data || {};
+
+      if (d.status === 'NOT_FILED') {
+        notFiled++;
+        addDlLog(`  → Not filed`, 'warn');
+      } else if (d.base64) {
+        const filename = d.filename || `${returnType}_${monthAbbr}${year}.pdf`;
+        collected.push({ name: filename, base64: d.base64 });
+        downloaded++;
+        const kb = Math.round(d.base64.length * 0.75 / 1024);
+        addDlLog(`  → ✓ ${filename} (${kb} KB)`, 'ok');
+      } else {
+        failed++;
+        addDlLog(`  → Error: ${d.error || d.message || `HTTP ${res.httpStatus}`}`, 'error');
+      }
+
+      updateBulkCounts(downloaded, notFiled, failed);
+
+      // 1–2 s polite delay between requests (skip after last)
+      if (i < periods.length - 1 && state.dlBulkRunning) {
+        await sleep(1000 + Math.random() * 1000);
+      }
+    }
+
+    setBulkProgress(periods.length, periods.length, `Done — ${periods.length} processed`);
+    addDlLog(`─── Bulk complete: ${downloaded} downloaded, ${notFiled} not filed, ${failed} failed ───`, 'step');
+
+    if (collected.length === 0) {
+      addDlLog('No PDFs to save.', 'warn');
+      return;
+    }
+
+    const defaultName = `${returnType}_${startMonth.slice(0,3)}${startYear}_to_${endMonth.slice(0,3)}${endYear}.zip`;
+    addDlLog(`Creating ZIP with ${collected.length} file(s)…`, 'step');
+
+    const saveRes = await window.gstApp.saveZip({ files: collected, defaultName });
+    if (saveRes.canceled) { addDlLog('Save cancelled.', 'warn'); return; }
+    if (saveRes.ok) {
+      addDlLog(`✓ ZIP saved: ${saveRes.filePath} (${saveRes.count} files)`, 'ok');
+      window.gstApp.openFile(saveRes.filePath);
+    } else {
+      throw new Error(saveRes.error);
+    }
+
+  } catch (e) {
+    if (e.name === 'ApiKeyError') addDlLog(e.message, 'error');
+    else addDlLog(`Error: ${e.message}`, 'error');
+    hideDlCaptcha();
+    if (state.dlCaptchaReject) { state.dlCaptchaReject(e); state.dlCaptchaReject = null; }
+  } finally {
+    state.dlBulkRunning = false;
+    $('dlBulkDownloadBtn').disabled  = false;
+    $('dlLoginDownloadBtn').disabled = false;
+    $('dlLogoutBtn').disabled        = false;
+    $('dlBulkStopBtn').disabled      = true;
+    updateDlSessionStatus();
+  }
+});
+
+$('dlBulkStopBtn').addEventListener('click', () => {
+  state.dlBulkRunning = false;
+  addDlLog('Stop requested…', 'warn');
+  $('dlBulkStopBtn').disabled = true;
+  if (state.dlCaptchaReject) { state.dlCaptchaReject(new Error('Stopped by user')); state.dlCaptchaReject = null; }
+});
+
 // ── Logout (Tab 2) ────────────────────────────────────────────────────────────
 $('dlLogoutBtn').addEventListener('click', async () => {
   if (!state.dlSessionId) { updateDlSessionStatus(); return; }
@@ -1058,6 +1233,7 @@ const PERSIST_FIELDS = [
   'smtpHost','smtpPort','smtpSecure','smtpUser','smtpFrom','emailSubject','emailBody',
   'month','year','returnType',
   'dlUsername','dlReturnType','dlMonth','dlYear',
+  'dlBulkReturnType','dlBulkStartMonth','dlBulkStartYear','dlBulkEndMonth','dlBulkEndYear',
 ];
 
 async function loadSavedConfig() {
@@ -1083,7 +1259,7 @@ for (const key of PERSIST_FIELDS) {
 // ── Year dropdowns ────────────────────────────────────────────────────────────
 function populateYearDropdown() {
   const curYear = new Date().getFullYear();
-  for (const selId of ['year', 'dlYear']) {
+  for (const selId of ['year', 'dlYear', 'dlBulkStartYear', 'dlBulkEndYear']) {
     const sel = $(selId);
     if (!sel) continue;
     for (let y = curYear; y >= 2017; y--) {

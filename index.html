@@ -293,6 +293,71 @@
           <button class="btn-secondary" id="dlLogoutBtn" style="padding:10px 14px;" title="End client session">Logout</button>
         </div>
 
+        <section class="card">
+          <h2><span class="icon">📦</span> Bulk Download (Range)</h2>
+          <div class="smtp-note">
+            Downloads all returns in the selected range, waits 1–2 s between requests, then saves a single ZIP.
+          </div>
+          <div class="form-group">
+            <label>Return Type</label>
+            <select id="dlBulkReturnType">
+              <option value="GSTR1">GSTR-1 / GSTR-1FF</option>
+              <option value="GSTR3B">GSTR-3B</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>From Month</label>
+              <select id="dlBulkStartMonth">
+                <option value="January">January</option>
+                <option value="February">February</option>
+                <option value="March">March</option>
+                <option value="April" selected>April</option>
+                <option value="May">May</option>
+                <option value="June">June</option>
+                <option value="July">July</option>
+                <option value="August">August</option>
+                <option value="September">September</option>
+                <option value="October">October</option>
+                <option value="November">November</option>
+                <option value="December">December</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Year</label>
+              <select id="dlBulkStartYear"></select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>To Month</label>
+              <select id="dlBulkEndMonth">
+                <option value="January">January</option>
+                <option value="February">February</option>
+                <option value="March">March</option>
+                <option value="April">April</option>
+                <option value="May">May</option>
+                <option value="June">June</option>
+                <option value="July">July</option>
+                <option value="August">August</option>
+                <option value="September">September</option>
+                <option value="October">October</option>
+                <option value="November">November</option>
+                <option value="December" selected>December</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Year</label>
+              <select id="dlBulkEndYear"></select>
+            </div>
+          </div>
+        </section>
+
+        <div style="display:flex;gap:8px;padding-bottom:4px;">
+          <button class="btn-success btn-lg" id="dlBulkDownloadBtn" style="flex:1;">📦 Bulk Download &amp; ZIP</button>
+          <button class="btn-danger" id="dlBulkStopBtn" disabled style="padding:10px 14px;">Stop</button>
+        </div>
+
       </div><!-- /config-panel -->
 
       <!-- Right: Captcha + Download Log -->
@@ -309,6 +374,18 @@
             <button class="btn-secondary" id="dlCaptchaRefreshBtn" title="Refresh captcha">↺</button>
           </div>
           <div id="dlCaptchaError" class="captcha-error hidden"></div>
+        </section>
+
+        <section class="card hidden" id="dlBulkProgressCard">
+          <h2><span class="icon">📦</span> Bulk Download Progress</h2>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar" id="dlBulkProgressBar"></div>
+          </div>
+          <div class="progress-text">
+            <span id="dlBulkProgressLabel">Starting…</span>
+            <span id="dlBulkProgressPct"></span>
+          </div>
+          <div class="summary-counts" id="dlBulkCounts" style="margin-top:6px;"></div>
         </section>
 
         <section class="card">
