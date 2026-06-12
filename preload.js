@@ -15,4 +15,6 @@ contextBridge.exposeInMainWorld('gstApp', {
   saveExcel:         (args) => ipcRenderer.invoke('save-excel', args),
   sendEmail:         (args) => ipcRenderer.invoke('send-email', args),
   openFile:          (p)    => ipcRenderer.invoke('open-file', p),
+  downloadPdf:       (args) => ipcRenderer.invoke('api-download-pdf', args),
+  savePdf:           (args) => ipcRenderer.invoke('save-pdf', args),
 });

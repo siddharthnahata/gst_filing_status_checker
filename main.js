@@ -13,10 +13,18 @@ let mainWindow;
 const getConfigPath = () => path.join(app.getPath('userData'), 'gst-checker-config.json');
 
 function loadConfig() {
+  // User's saved config takes priority
   try {
     const p = getConfigPath();
     if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
   } catch (_) {}
+
+  // Fall back to bundled defaults on first launch
+  try {
+    const defaultPath = path.join(__dirname, 'default-config.json');
+    if (fs.existsSync(defaultPath)) return JSON.parse(fs.readFileSync(defaultPath, 'utf8'));
+  } catch (_) {}
+
   return {};
 }
 
@@ -237,4 +245,30 @@ ipcMain.handle('send-email', async (_event, { smtpConfig, to, subject, html, tex
 
 ipcMain.handle('open-file', (_event, filePath) => {
   shell.openPath(filePath);
+});
+
+ipcMain.handle('api-download-pdf', async (_event, { endpoint, apiKey, sessionId, returnType, financialYear, returnPeriod }) => {
+  try {
+    const route = returnType === 'GSTR3B'
+      ? '/returns/gstr3b/download-pdf'
+      : '/returns/gstr1/download-pdf';
+    return await apiFetch(`${endpoint}${route}`, { sessionId, financialYear, returnPeriod }, apiKey);
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('save-pdf', async (_event, { base64, defaultName }) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save Filed Return PDF',
+    defaultPath: defaultName || 'return.pdf',
+    filters: [{ name: 'PDF Document', extensions: ['pdf'] }],
+  });
+  if (result.canceled) return { canceled: true };
+  try {
+    fs.writeFileSync(result.filePath, Buffer.from(base64, 'base64'));
+    return { ok: true, filePath: result.filePath };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
 });
