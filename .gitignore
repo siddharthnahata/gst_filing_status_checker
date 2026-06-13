@@ -4,3 +4,5 @@ dist/
 Thumbs.db
 *.log
 default-config.json
+chromium/
+api/node_modules/

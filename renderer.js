@@ -34,7 +34,7 @@ function isApiKeyError(result) {
 
 function throwIfApiKeyError(result) {
   if (isApiKeyError(result)) {
-    throw new ApiKeyError('Invalid or missing API key — check the API Key field in the top bar.');
+    throw new ApiKeyError('API authentication error — try restarting the app.');
   }
 }
 
@@ -310,7 +310,7 @@ $('captchaRefreshBtn').addEventListener('click', async () => {
       password: $('password').value,
     });
     if (isApiKeyError(res)) {
-      const err = new ApiKeyError('Invalid or missing API key — check the API Key field.');
+      const err = new ApiKeyError('API authentication error — try restarting the app.');
       showCaptchaError(err.message);
       if (state.captchaReject) { state.captchaReject(err); state.captchaReject = null; }
       return;
@@ -343,7 +343,7 @@ async function handleCaptchaSubmit() {
   });
 
   if (isApiKeyError(res)) {
-    const err = new ApiKeyError('Invalid or missing API key — check the API Key field.');
+    const err = new ApiKeyError('API authentication error — try restarting the app.');
     showCaptchaError(err.message);
     if (state.captchaReject) { state.captchaReject(err); state.captchaReject = null; }
     return;
@@ -594,15 +594,13 @@ async function sendEmails() {
 
 // ── Run button ────────────────────────────────────────────────────────────────
 $('runBtn').addEventListener('click', async () => {
-  if (!val('endpoint'))        { alert('Enter the API Base URL in the top bar.');          return; }
+  if (!state.endpoint)         { alert('Local API not ready. Please wait a moment and try again.'); return; }
   if (!val('username'))        { alert('Enter the GST Portal username.');                  return; }
   if (!$('password').value)    { alert('Enter the portal password.');                     return; }
   if (!state.inputRows.length) { alert('Select an input file with GSTINs first.');        return; }
 
   state.isRunning = true;
   state.results   = [];
-  state.endpoint  = val('endpoint').replace(/\/+$/, '');
-  state.apiKey    = $('apiKey').value.trim() || null;
 
   clearResultsTable();
   hide('summaryCounts');
@@ -783,7 +781,7 @@ $('dlCaptchaRefreshBtn').addEventListener('click', async () => {
       password: $('dlPassword').value,
     });
     if (isApiKeyError(res)) {
-      const err = new ApiKeyError('Invalid or missing API key — check the API Key field.');
+      const err = new ApiKeyError('API authentication error — try restarting the app.');
       showDlCaptchaError(err.message);
       if (state.dlCaptchaReject) { state.dlCaptchaReject(err); state.dlCaptchaReject = null; }
       return;
@@ -816,7 +814,7 @@ async function handleDlCaptchaSubmit() {
   });
 
   if (isApiKeyError(res)) {
-    const err = new ApiKeyError('Invalid or missing API key — check the API Key field.');
+    const err = new ApiKeyError('API authentication error — try restarting the app.');
     showDlCaptchaError(err.message);
     if (state.dlCaptchaReject) { state.dlCaptchaReject(err); state.dlCaptchaReject = null; }
     return;
@@ -856,10 +854,7 @@ async function handleDlCaptchaSubmit() {
 
 // ── Login & Download button ───────────────────────────────────────────────────
 $('dlLoginDownloadBtn').addEventListener('click', async () => {
-  if (!val('endpoint')) { alert('Enter the API Base URL in the top bar.'); return; }
-
-  state.endpoint = val('endpoint').replace(/\/+$/, '');
-  state.apiKey   = $('apiKey').value.trim() || null;
+  if (!state.endpoint) { alert('Local API not ready. Please wait a moment and try again.'); return; }
 
   $('dlLoginDownloadBtn').disabled = true;
   $('dlLogoutBtn').disabled        = true;
@@ -1011,7 +1006,7 @@ function updateBulkCounts(downloaded, notFiled, failed) {
 
 // ── Bulk Download button ──────────────────────────────────────────────────────
 $('dlBulkDownloadBtn').addEventListener('click', async () => {
-  if (!val('endpoint')) { alert('Enter the API Base URL in the top bar.'); return; }
+  if (!state.endpoint) { alert('Local API not ready. Please wait a moment and try again.'); return; }
 
   const startMonth = $('dlBulkStartMonth').value;
   const startYear  = parseInt($('dlBulkStartYear').value);
@@ -1022,8 +1017,6 @@ $('dlBulkDownloadBtn').addEventListener('click', async () => {
   const periods = getMonthRange(startMonth, startYear, endMonth, endYear);
   if (!periods.length) { alert('Invalid date range — "From" must be before or equal to "To".'); return; }
 
-  state.endpoint = val('endpoint').replace(/\/+$/, '');
-  state.apiKey   = $('apiKey').value.trim() || null;
   state.dlBulkRunning = true;
 
   $('dlBulkDownloadBtn').disabled = true;
@@ -1170,26 +1163,6 @@ $('dlLogoutBtn').addEventListener('click', async () => {
 //  SHARED — health-check, file picker, SMTP sync, config, year dropdowns
 // ─────────────────────────────────────────────────────────────────────────────
 
-$('healthBtn').addEventListener('click', async () => {
-  const endpoint = val('endpoint').replace(/\/+$/, '');
-  if (!endpoint) { alert('Enter an API Base URL first.'); return; }
-
-  $('healthBtn').disabled = true;
-  const el = $('healthStatus');
-  el.style.cssText = 'margin-top:4px;font-size:11.5px;padding:3px 8px;border-radius:4px;background:#fef3c7;color:#92400e;';
-  el.textContent = 'Checking…';
-  el.classList.remove('hidden');
-
-  const res = await window.gstApp.healthCheck({ endpoint });
-  if (res.ok) {
-    el.style.cssText = 'margin-top:4px;font-size:11.5px;padding:3px 8px;border-radius:4px;background:#dcfce7;color:#166534;';
-    el.textContent = '✓ Reachable';
-  } else {
-    el.style.cssText = 'margin-top:4px;font-size:11.5px;padding:3px 8px;border-radius:4px;background:#fee2e2;color:#991b1b;';
-    el.textContent = `✗ ${res.error || `HTTP ${res.httpStatus}`}`;
-  }
-  $('healthBtn').disabled = false;
-});
 
 $('browseBtn').addEventListener('click', async () => {
   const filePath = await window.gstApp.pickFile();
@@ -1229,7 +1202,7 @@ $('dlYear').addEventListener('change', updateDlFYDisplay);
 
 // ── Config persistence ────────────────────────────────────────────────────────
 const PERSIST_FIELDS = [
-  'endpoint','apiKey','username',
+  'username',
   'smtpHost','smtpPort','smtpSecure','smtpUser','smtpFrom','emailSubject','emailBody',
   'month','year','returnType',
   'dlUsername','dlReturnType','dlMonth','dlYear',
@@ -1272,10 +1245,32 @@ function populateYearDropdown() {
   }
 }
 
+// ── Local API status bar ──────────────────────────────────────────────────────
+async function initLocalApi() {
+  const dot   = $('localApiDot');
+  const label = $('localApiLabel');
+  try {
+    const port = await window.gstApp.getLocalApiPort();
+    if (port) {
+      state.endpoint = `http://127.0.0.1:${port}`;
+      state.apiKey   = null;
+      dot.className  = 'local-api-dot ready';
+      label.textContent = `Local API ready — port ${port}`;
+    } else {
+      dot.className  = 'local-api-dot error';
+      label.textContent = 'Local API failed to start — restart the app';
+    }
+  } catch (e) {
+    dot.className  = 'local-api-dot error';
+    label.textContent = `Local API error: ${e.message}`;
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async function init() {
   populateYearDropdown();
   await loadSavedConfig();
+  await initLocalApi();
   updateFYDisplay();
   updateDlFYDisplay();
   updateDlSessionStatus();

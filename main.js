@@ -1,13 +1,72 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, utilityProcess } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const net = require('net');
 const xlsx = require('xlsx');
 const nodemailer = require('nodemailer');
 const JSZip = require('jszip');
 
 let mainWindow;
+let apiProcess = null;
+let localApiPort = null;
+
+// ── Bundled API ───────────────────────────────────────────────────────────────
+
+function findFreePort(start = 40123) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.listen(start, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+    server.on('error', () => findFreePort(start + 1).then(resolve, reject));
+  });
+}
+
+async function waitForApiReady(port, attempts = 40) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      if (res.ok) return true;
+    } catch (_) {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return false;
+}
+
+async function startLocalApi() {
+  localApiPort = await findFreePort();
+
+  const apiEntry = app.isPackaged
+    ? path.join(process.resourcesPath, 'api', 'src', 'index.js')
+    : path.join(__dirname, 'api', 'src', 'index.js');
+
+  const chromiumExe = app.isPackaged
+    ? path.join(process.resourcesPath, 'chromium', 'chrome.exe')
+    : path.join(__dirname, 'chromium', 'chrome.exe');
+
+  const env = {
+    ...process.env,
+    PORT: String(localApiPort),
+    PUPPETEER_HEADLESS: '1',
+    PUPPETEER_EXECUTABLE_PATH: chromiumExe,
+    // No api-keys.txt → API stays open for local-only access
+    API_KEYS_FILE: path.join(app.getPath('temp'), '__gst_no_keys_file_does_not_exist__'),
+  };
+
+  apiProcess = utilityProcess.fork(apiEntry, [], { env, stdio: 'pipe' });
+
+  apiProcess.stdout?.on('data', (d) => console.log('[API]', d.toString().trim()));
+  apiProcess.stderr?.on('data', (d) => console.error('[API-ERR]', d.toString().trim()));
+
+  const ready = await waitForApiReady(localApiPort);
+  if (!ready) {
+    console.error('[main] API did not become ready in time');
+    localApiPort = null;
+  }
+}
 
 // ── Config persistence ────────────────────────────────────────────────────────
 
@@ -55,7 +114,12 @@ function createWindow() {
   mainWindow.loadFile('index.html');
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  await startLocalApi();
+  createWindow();
+});
+
+app.on('before-quit', () => apiProcess?.kill());
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -89,6 +153,8 @@ async function apiFetch(url, body, apiKey) {
 }
 
 // ── IPC Handlers ──────────────────────────────────────────────────────────────
+
+ipcMain.handle('get-local-api-port', () => localApiPort);
 
 ipcMain.handle('load-config', () => loadConfig());
 

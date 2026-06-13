@@ -1,0 +1,16 @@
+{
+  "name": "gst-api-bundled",
+  "version": "1.0.0",
+  "description": "Bundled GST portal API (Puppeteer + Express)",
+  "main": "src/index.js",
+  "dependencies": {
+    "express": "^5.2.1",
+    "puppeteer": "^24.40.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "uuid": "^9.0.1"
+  },
+  "allowScripts": {
+    "puppeteer@24.43.1": true
+  }
+}

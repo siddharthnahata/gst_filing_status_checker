@@ -11,7 +11,7 @@
 <!-- ── Header ──────────────────────────────────────────────────────────────── -->
 <header class="app-header">
   <h1>GST Filing Status Checker</h1>
-  <span class="badge">v1.1.0</span>
+  <span class="badge">v2.0.0</span>
   <div class="header-spacer"></div>
   <div class="header-status" id="headerStatus">
     <span class="status-dot" id="statusDot"></span>
@@ -19,20 +19,10 @@
   </div>
 </header>
 
-<!-- ── Shared API Bar ──────────────────────────────────────────────────────── -->
-<div class="api-bar">
-  <div class="api-bar-field api-bar-endpoint">
-    <label>API Endpoint</label>
-    <div class="api-bar-input-wrap">
-      <input type="text" id="endpoint" placeholder="http://80.225.254.16:3010" autocomplete="off" spellcheck="false">
-      <button class="btn-secondary api-test-btn" id="healthBtn">Test ⚡</button>
-    </div>
-    <div id="healthStatus" class="health-status hidden"></div>
-  </div>
-  <div class="api-bar-field">
-    <label>API Key <span class="label-hint">(x-api-key)</span></label>
-    <input type="password" id="apiKey" placeholder="Paste API key" autocomplete="new-password" spellcheck="false">
-  </div>
+<!-- ── Local API Status Bar ──────────────────────────────────────────────── -->
+<div class="api-bar api-bar-local">
+  <span class="local-api-dot" id="localApiDot">●</span>
+  <span id="localApiLabel">Starting local API…</span>
 </div>
 
 <!-- ── Tab Bar ─────────────────────────────────────────────────────────────── -->

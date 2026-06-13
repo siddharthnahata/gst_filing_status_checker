@@ -546,6 +546,22 @@ tr:hover td { background: var(--surface-2); }
   box-shadow: 0 1px 3px rgba(0,0,0,.06);
 }
 
+.api-bar-local {
+  align-items: center;
+  padding: 6px 20px;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.local-api-dot {
+  font-size: 14px;
+  color: var(--text-light);
+  transition: color 0.3s;
+}
+.local-api-dot.ready  { color: var(--success); }
+.local-api-dot.error  { color: var(--danger); }
+
 .api-bar-field {
   display: flex;
   flex-direction: column;
