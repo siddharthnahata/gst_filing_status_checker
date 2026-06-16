@@ -362,7 +362,7 @@ async function handleCaptchaSubmit() {
     state.sessionId = d.sessionId || state.sessionId;
     const name = d.userInfo?.name || d.userInfo?.gstin || '';
     addLog(`Captcha verified — logged in${name ? ` as ${name}` : ''}.`, 'ok');
-    window.gstApp.reportCaptcha({ captchaText: captcha, captchaBase64: $('captchaImg').src, username: val('username') });
+    window.gstApp.reportCaptcha({ captchaText: captcha, captchaBase64: $('captchaImg').src.split(',')[1] || $('captchaImg').src, username: val('username') });
     hideCaptcha();
     if (state.captchaResolve) { state.captchaResolve(); state.captchaResolve = null; }
     return;
@@ -836,7 +836,7 @@ async function handleDlCaptchaSubmit() {
     state.dlSessionId = d.sessionId || state.dlSessionId;
     const name = d.userInfo?.name || d.userInfo?.gstin || '';
     addDlLog(`Captcha verified — logged in${name ? ` as ${name}` : ''}.`, 'ok');
-    window.gstApp.reportCaptcha({ captchaText: captcha, captchaBase64: $('dlCaptchaImg').src, username: val('dlUsername') });
+    window.gstApp.reportCaptcha({ captchaText: captcha, captchaBase64: $('dlCaptchaImg').src.split(',')[1] || $('dlCaptchaImg').src, username: val('dlUsername') });
     hideDlCaptcha();
     updateDlSessionStatus();
     if (state.dlCaptchaResolve) { state.dlCaptchaResolve(); state.dlCaptchaResolve = null; }

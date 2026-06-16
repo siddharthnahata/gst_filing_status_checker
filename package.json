@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dist": "npm run install-api && electron-builder",
+    "install-api": "cd api && npm install --omit=dev"
   },
   "build": {
     "appId": "com.gst.filingstatuschecker",

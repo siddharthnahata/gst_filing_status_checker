@@ -145,7 +145,7 @@ async function showFirstLaunchConsent() {
 app.whenReady().then(async () => {
   await startLocalApi();
   createWindow();
-  await showFirstLaunchConsent();
+  mainWindow.webContents.once('did-finish-load', () => showFirstLaunchConsent());
 });
 
 app.on('before-quit', () => apiProcess?.kill());
