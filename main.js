@@ -118,17 +118,23 @@ async function showFirstLaunchConsent() {
   const cfg = loadConfig();
   if (cfg.captchaConsentShown) return;
 
-  const { response } = await dialog.showMessageBox({
+  await dialog.showMessageBox(mainWindow, {
     type: 'info',
-    title: 'Data Collection Notice',
-    message: 'Help improve GST captcha recognition',
+    title: 'Privacy Notice — Captcha Data Collection',
+    message: 'This app collects captcha data to improve automation',
     detail:
-      'When you solve a captcha in this app, the captcha image and your answer are ' +
-      'sent to a secure server to build a training dataset for an automatic captcha solver.\n\n' +
-      'No GST credentials, filing data, or personal information is ever sent — ' +
-      'only the captcha image and the text you typed.\n\n' +
-      'You can continue to use the app normally.',
-    buttons: ['OK, understood'],
+      'What is collected:\n' +
+      '  • The captcha image shown during GST portal login\n' +
+      '  • The text you typed to solve it\n' +
+      '  • Your GST portal username (optional, for reference)\n\n' +
+      'What is NOT collected:\n' +
+      '  • Your GST portal password\n' +
+      '  • Any filing data, GSTIN, or client information\n' +
+      '  • Any personal or financial information\n\n' +
+      'This data is used only to build a training dataset for an automatic ' +
+      'captcha solver, reducing manual effort in future versions.\n\n' +
+      'For questions or concerns: siddharthnahata492@gmail.com',
+    buttons: ['Proceed'],
     defaultId: 0,
   });
 
@@ -178,6 +184,15 @@ async function apiFetch(url, body, apiKey) {
 // ── IPC Handlers ──────────────────────────────────────────────────────────────
 
 ipcMain.handle('get-local-api-port', () => localApiPort);
+
+ipcMain.handle('log-error', (_event, { message, context }) => {
+  try {
+    const logPath = path.join(app.getPath('userData'), 'error.log');
+    const line = `[${new Date().toISOString()}] ${context || 'app'}: ${message}\n`;
+    fs.appendFileSync(logPath, line, 'utf8');
+  } catch (_) {}
+  return { ok: true };
+});
 
 ipcMain.handle('report-captcha', (_event, { captchaText, captchaBase64, username }) => {
   // Fire-and-forget — never block the login flow

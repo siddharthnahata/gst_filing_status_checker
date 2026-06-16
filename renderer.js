@@ -625,6 +625,8 @@ $('runBtn').addEventListener('click', async () => {
 
   } catch (e) {
     addLog(`Fatal error: ${e.message}`, 'error');
+    addLog('If this keeps happening, contact: siddharthnahata492@gmail.com', 'info');
+    window.gstApp.logError({ message: e.message, context: `filing-status | ${$('username').value} | ${$('month').value} ${$('year').value} | ${$('returnType').value}` });
     setStatus('Error', 'error');
     hideCaptcha();
     if (state.captchaReject) { state.captchaReject(e); state.captchaReject = null; }
@@ -961,6 +963,8 @@ $('dlLoginDownloadBtn').addEventListener('click', async () => {
     } else {
       addDlLog(`Error: ${e.message}`, 'error');
     }
+    addDlLog('If this keeps happening, contact: siddharthnahata492@gmail.com', 'info');
+    window.gstApp.logError({ message: e.message, context: `download | ${val('dlUsername')} | ${$('dlReturnType').value} | ${$('dlMonth').value} ${$('dlYear').value}` });
     statusEl.textContent = `✗ ${e.message}`;
     statusEl.className   = 'dl-status error';
     show('dlStatus');
@@ -1126,6 +1130,8 @@ $('dlBulkDownloadBtn').addEventListener('click', async () => {
   } catch (e) {
     if (e.name === 'ApiKeyError') addDlLog(e.message, 'error');
     else addDlLog(`Error: ${e.message}`, 'error');
+    addDlLog('If this keeps happening, contact: siddharthnahata492@gmail.com', 'info');
+    window.gstApp.logError({ message: e.message, context: `bulk-download | ${val('dlUsername')} | ${$('dlBulkReturnType').value}` });
     hideDlCaptcha();
     if (state.dlCaptchaReject) { state.dlCaptchaReject(e); state.dlCaptchaReject = null; }
   } finally {
