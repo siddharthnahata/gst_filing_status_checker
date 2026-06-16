@@ -24,6 +24,10 @@
       {
         "from": "chromium",
         "to": "chromium"
+      },
+      {
+        "from": "secrets.json",
+        "to": "secrets.json"
       }
     ],
     "win": {

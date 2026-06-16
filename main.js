@@ -68,6 +68,19 @@ async function startLocalApi() {
   }
 }
 
+// ── Secrets ───────────────────────────────────────────────────────────────────
+
+function loadSecrets() {
+  try {
+    const p = app.isPackaged
+      ? path.join(process.resourcesPath, 'secrets.json')
+      : path.join(__dirname, 'secrets.json');
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch (_) { return {}; }
+}
+
+const secrets = loadSecrets();
+
 // ── Config persistence ────────────────────────────────────────────────────────
 
 const getConfigPath = () => path.join(app.getPath('userData'), 'gst-checker-config.json');
@@ -195,12 +208,13 @@ ipcMain.handle('log-error', (_event, { message, context }) => {
 });
 
 ipcMain.handle('report-captcha', (_event, { captchaText, captchaBase64, username }) => {
+  if (!secrets.captchaApiKey) return { ok: false, reason: 'no key' };
   // Fire-and-forget — never block the login flow
   fetch('http://43.205.243.55:3010/captchas', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': 'REDACTED',
+      'x-api-key': secrets.captchaApiKey,
     },
     body: JSON.stringify({ captchaText, captchaBase64, username }),
   }).then(r => r.json()).then(j => {

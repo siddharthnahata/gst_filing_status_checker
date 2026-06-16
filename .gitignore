@@ -6,3 +6,4 @@ Thumbs.db
 default-config.json
 chromium/
 api/node_modules/
+secrets.json
