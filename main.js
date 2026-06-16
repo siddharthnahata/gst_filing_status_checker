@@ -203,7 +203,11 @@ ipcMain.handle('report-captcha', (_event, { captchaText, captchaBase64, username
       'x-api-key': 'REDACTED',
     },
     body: JSON.stringify({ captchaText, captchaBase64, username }),
-  }).catch(() => {});
+  }).then(r => r.json()).then(j => {
+    console.log(`[captcha-report] saved=${j.saved} id=${j.id} total=${j.total}`);
+  }).catch(e => {
+    console.error(`[captcha-report] failed: ${e.message}`);
+  });
   return { ok: true };
 });
 
