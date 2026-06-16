@@ -114,9 +114,32 @@ function createWindow() {
   mainWindow.loadFile('index.html');
 }
 
+async function showFirstLaunchConsent() {
+  const cfg = loadConfig();
+  if (cfg.captchaConsentShown) return;
+
+  const { response } = await dialog.showMessageBox({
+    type: 'info',
+    title: 'Data Collection Notice',
+    message: 'Help improve GST captcha recognition',
+    detail:
+      'When you solve a captcha in this app, the captcha image and your answer are ' +
+      'sent to a secure server to build a training dataset for an automatic captcha solver.\n\n' +
+      'No GST credentials, filing data, or personal information is ever sent — ' +
+      'only the captcha image and the text you typed.\n\n' +
+      'You can continue to use the app normally.',
+    buttons: ['OK, understood'],
+    defaultId: 0,
+  });
+
+  cfg.captchaConsentShown = true;
+  saveConfig(cfg);
+}
+
 app.whenReady().then(async () => {
   await startLocalApi();
   createWindow();
+  await showFirstLaunchConsent();
 });
 
 app.on('before-quit', () => apiProcess?.kill());
@@ -155,6 +178,19 @@ async function apiFetch(url, body, apiKey) {
 // ── IPC Handlers ──────────────────────────────────────────────────────────────
 
 ipcMain.handle('get-local-api-port', () => localApiPort);
+
+ipcMain.handle('report-captcha', (_event, { captchaText, captchaBase64, username }) => {
+  // Fire-and-forget — never block the login flow
+  fetch('http://43.205.243.55:3010/captchas', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': 'REDACTED',
+    },
+    body: JSON.stringify({ captchaText, captchaBase64, username }),
+  }).catch(() => {});
+  return { ok: true };
+});
 
 ipcMain.handle('load-config', () => loadConfig());
 

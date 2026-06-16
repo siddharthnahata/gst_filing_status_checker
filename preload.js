@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('gstApp', {
   getLocalApiPort:   ()     => ipcRenderer.invoke('get-local-api-port'),
+  reportCaptcha:     (args) => ipcRenderer.invoke('report-captcha', args),
   healthCheck:       (args) => ipcRenderer.invoke('api-health', args),
   loadConfig:        ()     => ipcRenderer.invoke('load-config'),
   saveConfig:        (cfg)  => ipcRenderer.invoke('save-config', cfg),
