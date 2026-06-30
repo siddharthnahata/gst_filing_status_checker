@@ -8,9 +8,9 @@
 </head>
 <body>
 
-<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<!-- ── Header ─────────────────────────────────────────────────── -->
 <header class="app-header">
-  <h1>GST Filing Status Checker</h1>
+  <h1>GST <span class="dot">●</span> Filing Status Checker</h1>
   <span class="badge">v2.1.0</span>
   <div class="header-spacer"></div>
   <div class="header-status" id="headerStatus">
@@ -19,203 +19,192 @@
   </div>
 </header>
 
-<!-- ── Local API Status Bar ──────────────────────────────────────────────── -->
+<!-- ── Engine Status Bar ──────────────────────────────────────── -->
 <div class="api-bar api-bar-local">
   <span class="local-api-dot" id="localApiDot">●</span>
-  <span id="localApiLabel">Starting local API…</span>
+  <span id="localApiLabel">Starting local engine…</span>
 </div>
 
-<!-- ── Tab Bar ─────────────────────────────────────────────────────────────── -->
+<!-- ── Tab Bar ────────────────────────────────────────────────── -->
 <div class="tab-bar">
-  <button class="tab-btn active" data-tab="tab-checker">⚡ Filing Status Check</button>
-  <button class="tab-btn" data-tab="tab-download">📄 Return Downloads · PDF</button>
+  <button class="tab-btn active" data-tab="tab-checker">Filing Status Check</button>
+  <button class="tab-btn" data-tab="tab-download">Return Downloads · PDF</button>
 </div>
 
-<!-- ── Tab Panels ──────────────────────────────────────────────────────────── -->
+<!-- ── Tab Panels ─────────────────────────────────────────────── -->
 <div class="tab-panels">
 
-  <!-- ── TAB 1: Filing Status Checker ─────────────────────────────────────── -->
+  <!-- ════════════════════════════════════════════════════════════
+       TAB 1 — Filing Status Checker
+       ════════════════════════════════════════════════════════════ -->
   <div class="tab-panel active" id="tab-checker">
     <div class="panel-body">
 
-      <!-- Left: Config -->
+      <!-- ── Setup Column ──────────────────────────────────────── -->
       <div class="config-panel">
 
-        <section class="card">
-          <h2><span class="icon">👤</span> Portal Login</h2>
-          <div class="form-group">
-            <label>Saved Accounts</label>
-            <div class="accounts-row">
-              <select id="savedAccounts">
-                <option value="">— Select saved account —</option>
-              </select>
-              <button class="btn-icon" id="saveAccountBtn" title="Save current credentials">💾</button>
-              <button class="btn-icon btn-icon-danger" id="deleteAccountBtn" title="Delete selected">✕</button>
+        <!-- Account -->
+        <div class="form-section">
+          <div class="section-label">Account</div>
+          <div class="accounts-row">
+            <select id="savedAccounts"><option value="">— select saved account —</option></select>
+            <button class="btn-icon" id="saveAccountBtn" title="Save current credentials">💾</button>
+            <button class="btn-icon btn-icon-danger" id="deleteAccountBtn" title="Delete selected">✕</button>
+          </div>
+          <div class="accounts-bulk-row" style="margin-bottom:8px;">
+            <button class="btn-xs btn-secondary" id="importCredsBtn">↑ Import</button>
+            <button class="btn-xs btn-secondary" id="exportCredsBtn">↓ Export</button>
+          </div>
+          <div class="field-row field-row-2">
+            <div class="field">
+              <label>Username</label>
+              <input type="text" id="username" placeholder="GST portal user ID" autocomplete="off">
             </div>
-            <div class="accounts-bulk-row">
-              <button class="btn-xs btn-secondary" id="importCredsBtn">⬆ Import from Excel</button>
-              <button class="btn-xs btn-secondary" id="exportCredsBtn">⬇ Export Usernames</button>
+            <div class="field">
+              <label>Password</label>
+              <input type="password" id="password" placeholder="Portal password" autocomplete="new-password">
             </div>
           </div>
-          <div class="form-group">
-            <label>Username (CA's GST Portal User ID)</label>
-            <input type="text" id="username" placeholder="e.g. CA_username" autocomplete="off">
-          </div>
-          <div class="form-group">
-            <label>Password</label>
-            <input type="password" id="password" placeholder="Portal password" autocomplete="new-password">
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>GSTIN <span class="label-optional">(saved with account)</span></label>
+          <div class="field-row field-row-2">
+            <div class="field">
+              <label>GSTIN <span class="label-optional">saved with account</span></label>
               <input type="text" id="accountGstin" placeholder="15-char GSTIN" autocomplete="off" maxlength="15">
             </div>
-            <div class="form-group">
-              <label>Email <span class="label-optional">(saved with account)</span></label>
+            <div class="field">
+              <label>Email <span class="label-optional">saved with account</span></label>
               <input type="email" id="accountEmail" placeholder="contact@example.com">
             </div>
           </div>
-        </section>
+        </div>
 
-        <section class="card">
-          <h2><span class="icon">📂</span> Input Source</h2>
-          <div class="form-group">
-            <label>From Excel / CSV — columns: <strong>GSTIN</strong> · Username · Password · Email · Name</label>
+        <!-- Input Source -->
+        <div class="form-section">
+          <div class="section-label">Input Source</div>
+          <div class="field">
+            <label>Excel / CSV <span class="label-optional">GSTIN · Username · Password · Email · Name</span></label>
             <div class="file-picker">
               <input type="text" id="filePath" readonly placeholder="No file selected…">
               <button class="btn-secondary" id="browseBtn">Browse</button>
             </div>
           </div>
-          <div style="text-align:center;font-size:10px;color:var(--text-dim);margin:4px 0;letter-spacing:.08em;">— OR —</div>
-          <button class="btn-secondary btn-lg" id="loadFromDbBtn" style="margin-top:0;">🗄 Load from Saved Accounts</button>
+          <button class="btn-secondary btn-block" id="loadFromDbBtn">🗄 Load from Saved Accounts</button>
           <div id="fileInfo" class="file-info hidden"></div>
-        </section>
+        </div>
 
-        <section class="card">
-          <h2><span class="icon">📅</span> Query Parameters</h2>
-          <div class="form-row">
-            <div class="form-group">
+        <!-- Period & Return -->
+        <div class="form-section">
+          <div class="section-label">Period &amp; Return</div>
+          <div class="field-row field-row-2">
+            <div class="field">
               <label>Month</label>
               <select id="month">
-                <option value="January">January</option>
-                <option value="February">February</option>
-                <option value="March">March</option>
-                <option value="April">April</option>
-                <option value="May" selected>May</option>
-                <option value="June">June</option>
-                <option value="July">July</option>
-                <option value="August">August</option>
-                <option value="September">September</option>
-                <option value="October">October</option>
-                <option value="November">November</option>
-                <option value="December">December</option>
+                <option>January</option><option>February</option><option>March</option>
+                <option>April</option><option selected>May</option><option>June</option>
+                <option>July</option><option>August</option><option>September</option>
+                <option>October</option><option>November</option><option>December</option>
               </select>
             </div>
-            <div class="form-group">
+            <div class="field">
               <label>Year</label>
               <select id="year"></select>
             </div>
           </div>
-          <div class="form-group">
+          <div class="field">
             <label>Return Type</label>
             <select id="returnType">
-              <option value="GSTR1">GSTR1 / GSTR1-FF</option>
-              <option value="GSTR3B">GSTR3B</option>
+              <option value="GSTR1">GSTR-1 / GSTR-1FF (Monthly)</option>
+              <option value="GSTR3B">GSTR-3B (Monthly)</option>
+              <option value="GSTR1Q">GSTR-1 QRMP (Quarterly)</option>
+              <option value="GSTR4">GSTR-4 Composition (Annual)</option>
+              <option value="GSTR9">GSTR-9 Annual Return (Annual)</option>
+              <option value="GSTR9C">GSTR-9C Reconciliation (Annual)</option>
             </select>
           </div>
-          <div class="text-muted" id="fyDisplay" style="margin-top:6px;"></div>
-        </section>
+          <div class="text-muted" id="fyDisplay" style="margin-top:5px;"></div>
+        </div>
 
-        <section class="card">
-          <h2><span class="icon">✉️</span> Email Defaulters (SMTP)</h2>
-          <div class="smtp-note">
-            Leave blank to skip. Placeholders: <code>{gstin}</code> <code>{period}</code> <code>{returnType}</code>.
-            For Gmail use a 16-char App Password (requires 2FA).
-          </div>
-          <div class="form-row-3">
-            <div class="form-group">
-              <label>SMTP Host</label>
-              <input type="text" id="smtpHost" placeholder="smtp.gmail.com">
+        <!-- Email Defaulters — collapsed by default -->
+        <details class="form-section">
+          <summary>Email Defaulters</summary>
+          <div class="smtp-inner">
+            <div class="smtp-note">
+              Leave blank to skip. Placeholders: <code>{gstin}</code> <code>{period}</code> <code>{returnType}</code>.
+              Gmail: use a 16-char App Password (2FA required).
             </div>
-            <div class="form-group">
-              <label>Port</label>
-              <input type="number" id="smtpPort" value="465" min="1" max="65535">
+            <div class="field-row field-row-3">
+              <div class="field">
+                <label>SMTP Host</label>
+                <input type="text" id="smtpHost" placeholder="smtp.gmail.com">
+              </div>
+              <div class="field">
+                <label>Port</label>
+                <input type="number" id="smtpPort" value="465" min="1" max="65535">
+              </div>
+              <div class="field">
+                <label>Security</label>
+                <select id="smtpSecure">
+                  <option value="465">SSL 465</option>
+                  <option value="587">TLS 587</option>
+                  <option value="25">Plain 25</option>
+                </select>
+              </div>
             </div>
-            <div class="form-group">
-              <label>Security</label>
-              <select id="smtpSecure">
-                <option value="465">SSL (465)</option>
-                <option value="587">TLS (587)</option>
-                <option value="25">Plain (25)</option>
-              </select>
+            <div class="field-row field-row-2">
+              <div class="field">
+                <label>SMTP User</label>
+                <input type="text" id="smtpUser" placeholder="you@gmail.com">
+              </div>
+              <div class="field">
+                <label>App Password</label>
+                <input type="password" id="smtpPass" placeholder="16-char app password">
+              </div>
+            </div>
+            <div class="field">
+              <label>From</label>
+              <input type="text" id="smtpFrom" placeholder="Your Name &lt;you@gmail.com&gt;">
+            </div>
+            <div class="field">
+              <label>Subject</label>
+              <input type="text" id="emailSubject" placeholder="GST Filing Reminder — {gstin} — {period}">
+            </div>
+            <div class="field">
+              <label>Body</label>
+              <textarea id="emailBody" placeholder="Dear Taxpayer,&#10;&#10;Your {returnType} for {period} has not been filed.&#10;GSTIN: {gstin}"></textarea>
             </div>
           </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>SMTP User</label>
-              <input type="text" id="smtpUser" placeholder="you@gmail.com">
-            </div>
-            <div class="form-group">
-              <label>App Password</label>
-              <input type="password" id="smtpPass" placeholder="16-char app password">
-            </div>
-          </div>
-          <div class="form-group">
-            <label>From Address</label>
-            <input type="text" id="smtpFrom" placeholder="Your Name &lt;you@gmail.com&gt;">
-          </div>
-          <div class="form-group">
-            <label>Subject</label>
-            <input type="text" id="emailSubject" placeholder="GST Filing Reminder — {gstin} — {period}">
-          </div>
-          <div class="form-group">
-            <label>Body</label>
-            <textarea id="emailBody" rows="4" placeholder="Dear Taxpayer,&#10;&#10;Your {returnType} return for {period} has not been filed.&#10;GSTIN: {gstin}"></textarea>
-          </div>
-        </section>
+        </details>
 
-        <div style="display:flex;gap:8px;padding-bottom:4px;">
-          <button class="btn-primary btn-lg" id="runBtn" style="flex:1;">▶ Login &amp; Run</button>
-          <button class="btn-danger" id="stopBtn" disabled style="padding:10px 18px;">Stop</button>
+        <!-- Sticky action strip -->
+        <div class="action-strip">
+          <button class="btn-run" id="runBtn">▶ Login &amp; Run</button>
+          <button class="btn-danger" id="stopBtn" disabled>■ Stop</button>
         </div>
 
       </div><!-- /config-panel -->
 
-      <!-- Right: Progress + Results -->
+      <!-- ── Progress & Results Column ─────────────────────────── -->
       <div class="progress-panel">
 
-        <section class="card captcha-section hidden" id="captchaSection">
-          <h2><span class="icon">🔐</span> Captcha Verification</h2>
-          <div class="captcha-img-wrap">
-            <img id="captchaImg" src="" alt="CAPTCHA">
-          </div>
-          <div class="captcha-input-row">
-            <input type="text" id="captchaInput" placeholder="Type captcha here…" autocomplete="off" spellcheck="false">
-            <button class="btn-warning" id="captchaSubmitBtn">Submit</button>
-            <button class="btn-secondary" id="captchaRefreshBtn" title="Refresh captcha">↺</button>
-          </div>
-          <div id="captchaError" class="captcha-error hidden"></div>
-        </section>
-
-        <section class="card">
-          <h2><span class="icon">⚡</span> Progress</h2>
+        <!-- Live Progress -->
+        <div class="p-section">
           <div class="progress-bar-wrap">
             <div class="progress-bar" id="progressBar"></div>
           </div>
           <div class="progress-text">
-            <span id="progressLabel">Ready — configure settings and press Login &amp; Run</span>
+            <span id="progressLabel">Configure settings and press Login &amp; Run</span>
             <span id="progressPct"></span>
           </div>
           <div class="summary-counts hidden" id="summaryCounts"></div>
           <div class="log" id="log"></div>
-        </section>
+        </div>
 
-        <section class="card hidden" id="resultsSection">
+        <!-- Results Table -->
+        <div class="p-section hidden" id="resultsSection">
           <div class="results-header">
-            <h2><span class="icon">📊</span> Results</h2>
+            <div class="section-label">Results</div>
             <div class="results-actions">
-              <button class="btn-success" id="saveExcelBtn">💾 Save Excel</button>
-              <button class="btn-primary" id="sendEmailBtn">📧 Send Emails</button>
+              <button class="btn-success" id="saveExcelBtn">↓ Save Excel</button>
+              <button class="btn-primary" id="sendEmailBtn">✉ Send Emails</button>
             </div>
           </div>
           <div class="table-wrap">
@@ -226,7 +215,7 @@
                   <th>GSTIN</th>
                   <th>Name</th>
                   <th>Status</th>
-                  <th>Date of Filing</th>
+                  <th>Date Filed</th>
                   <th>ARN</th>
                   <th>Email</th>
                   <th>Note</th>
@@ -235,183 +224,153 @@
               <tbody id="resultsTbody"></tbody>
             </table>
           </div>
-        </section>
+        </div>
 
       </div><!-- /progress-panel -->
-
     </div><!-- /panel-body -->
-  </div><!-- /tab-checker -->
+  </div><!-- #tab-checker -->
 
 
-  <!-- ── TAB 2: Download Return ────────────────────────────────────────────── -->
+  <!-- ════════════════════════════════════════════════════════════
+       TAB 2 — Download Return
+       ════════════════════════════════════════════════════════════ -->
   <div class="tab-panel" id="tab-download">
     <div class="panel-body">
 
-      <!-- Left: Download Config -->
+      <!-- ── Setup Column ──────────────────────────────────────── -->
       <div class="config-panel">
 
-        <section class="card">
-          <h2><span class="icon">👤</span> Client Account Login</h2>
-          <div class="smtp-note">
-            Log in as the <strong>client whose return you want to download</strong>.
-            This is a separate session from the Filing Status tab.
+        <!-- Client Account -->
+        <div class="form-section">
+          <div class="section-label">Client Account</div>
+          <div class="smtp-note" style="margin-bottom:8px;">
+            Log in as the <strong>client whose return you want to download</strong> — separate session from Filing Status.
           </div>
-          <div class="form-group">
-            <label>Saved Accounts</label>
-            <div class="accounts-row">
-              <select id="dlSavedAccounts">
-                <option value="">— Select saved account —</option>
-              </select>
-              <button class="btn-icon" id="dlSaveAccountBtn" title="Save current credentials">💾</button>
-              <button class="btn-icon btn-icon-danger" id="dlDeleteAccountBtn" title="Delete selected">✕</button>
+          <div class="accounts-row">
+            <select id="dlSavedAccounts"><option value="">— select saved account —</option></select>
+            <button class="btn-icon" id="dlSaveAccountBtn" title="Save current credentials">💾</button>
+            <button class="btn-icon btn-icon-danger" id="dlDeleteAccountBtn" title="Delete selected">✕</button>
+          </div>
+          <div class="field-row field-row-2" style="margin-top:8px;">
+            <div class="field">
+              <label>Username</label>
+              <input type="text" id="dlUsername" placeholder="Client user ID" autocomplete="off">
+            </div>
+            <div class="field">
+              <label>Password</label>
+              <input type="password" id="dlPassword" placeholder="Client password" autocomplete="new-password">
             </div>
           </div>
-          <div class="form-group">
-            <label>Username (Client's GST Portal User ID)</label>
-            <input type="text" id="dlUsername" placeholder="Client GST username" autocomplete="off">
-          </div>
-          <div class="form-group">
-            <label>Password</label>
-            <input type="password" id="dlPassword" placeholder="Client portal password" autocomplete="new-password">
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>GSTIN <span class="label-optional">(saved with account)</span></label>
+          <div class="field-row field-row-2">
+            <div class="field">
+              <label>GSTIN <span class="label-optional">saved with account</span></label>
               <input type="text" id="dlAccountGstin" placeholder="15-char GSTIN" autocomplete="off" maxlength="15">
             </div>
-            <div class="form-group">
-              <label>Email <span class="label-optional">(saved with account)</span></label>
+            <div class="field">
+              <label>Email <span class="label-optional">saved with account</span></label>
               <input type="email" id="dlAccountEmail" placeholder="contact@example.com">
             </div>
           </div>
-          <div id="dlSessionStatus" class="dl-session-status inactive" style="margin-top:8px;">● No active session</div>
-        </section>
+          <div id="dlSessionStatus" class="dl-session-status inactive">● No active session</div>
+        </div>
 
-        <section class="card">
-          <h2><span class="icon">📄</span> Return to Download</h2>
-          <div class="form-group">
+        <!-- Return to Download -->
+        <div class="form-section">
+          <div class="section-label">Return to Download</div>
+          <div class="field">
             <label>Return Type</label>
             <select id="dlReturnType">
-              <option value="GSTR1">GSTR-1</option>
-              <option value="GSTR3B">GSTR-3B</option>
+              <option value="GSTR1">GSTR-1 (Monthly)</option>
+              <option value="GSTR3B">GSTR-3B (Monthly)</option>
+              <option value="GSTR4">GSTR-4 Composition (Annual)</option>
+              <option value="GSTR9">GSTR-9 Annual Return (Annual)</option>
+              <option value="GSTR9C">GSTR-9C Reconciliation (Annual)</option>
             </select>
           </div>
-          <div class="form-row">
-            <div class="form-group">
+          <div class="field-row field-row-2">
+            <div class="field">
               <label>Month</label>
               <select id="dlMonth">
-                <option value="January">January</option>
-                <option value="February">February</option>
-                <option value="March">March</option>
-                <option value="April">April</option>
-                <option value="May" selected>May</option>
-                <option value="June">June</option>
-                <option value="July">July</option>
-                <option value="August">August</option>
-                <option value="September">September</option>
-                <option value="October">October</option>
-                <option value="November">November</option>
-                <option value="December">December</option>
+                <option>January</option><option>February</option><option>March</option>
+                <option>April</option><option selected>May</option><option>June</option>
+                <option>July</option><option>August</option><option>September</option>
+                <option>October</option><option>November</option><option>December</option>
               </select>
             </div>
-            <div class="form-group">
+            <div class="field">
               <label>Year</label>
               <select id="dlYear"></select>
             </div>
           </div>
-          <div class="text-muted" id="dlFyDisplay" style="margin-top:2px;margin-bottom:8px;"></div>
-        </section>
-
-        <div style="display:flex;gap:8px;padding-bottom:4px;">
-          <button class="btn-primary btn-lg" id="dlLoginDownloadBtn" style="flex:1;">📄 Login &amp; Download PDF</button>
-          <button class="btn-secondary" id="dlLogoutBtn" style="padding:10px 14px;" title="End client session">Logout</button>
+          <div class="text-muted" id="dlFyDisplay" style="margin-top:3px;"></div>
         </div>
 
-        <section class="card">
-          <h2><span class="icon">📦</span> Bulk Download (Range)</h2>
-          <div class="smtp-note">
-            Downloads all returns in the selected range, waits 1–2 s between requests, then saves a single ZIP.
+        <!-- Single download action row (not sticky — sits inline) -->
+        <div class="action-row">
+          <button class="btn-run" id="dlLoginDownloadBtn">▶ Login &amp; Download PDF</button>
+          <button class="btn-secondary" id="dlLogoutBtn" title="End client session">Logout</button>
+        </div>
+
+        <!-- Bulk Download Range -->
+        <div class="form-section">
+          <div class="section-label">Bulk Download · Range</div>
+          <div class="smtp-note" style="margin-bottom:8px;">
+            Downloads all returns in the range, waits 1–2 s between requests, saves a single ZIP.
           </div>
-          <div class="form-group">
+          <div class="field">
             <label>Return Type</label>
             <select id="dlBulkReturnType">
-              <option value="GSTR1">GSTR-1 / GSTR-1FF</option>
-              <option value="GSTR3B">GSTR-3B</option>
+              <option value="GSTR1">GSTR-1 / GSTR-1FF (Monthly)</option>
+              <option value="GSTR3B">GSTR-3B (Monthly)</option>
+              <option value="GSTR9">GSTR-9 Annual Return (Annual)</option>
             </select>
           </div>
-          <div class="form-row">
-            <div class="form-group">
+          <div class="field-row field-row-2">
+            <div class="field">
               <label>From Month</label>
               <select id="dlBulkStartMonth">
-                <option value="January">January</option>
-                <option value="February">February</option>
-                <option value="March">March</option>
-                <option value="April" selected>April</option>
-                <option value="May">May</option>
-                <option value="June">June</option>
-                <option value="July">July</option>
-                <option value="August">August</option>
-                <option value="September">September</option>
-                <option value="October">October</option>
-                <option value="November">November</option>
-                <option value="December">December</option>
+                <option>January</option><option>February</option><option>March</option>
+                <option selected>April</option><option>May</option><option>June</option>
+                <option>July</option><option>August</option><option>September</option>
+                <option>October</option><option>November</option><option>December</option>
               </select>
             </div>
-            <div class="form-group">
+            <div class="field">
               <label>Year</label>
               <select id="dlBulkStartYear"></select>
             </div>
           </div>
-          <div class="form-row">
-            <div class="form-group">
+          <div class="field-row field-row-2">
+            <div class="field">
               <label>To Month</label>
               <select id="dlBulkEndMonth">
-                <option value="January">January</option>
-                <option value="February">February</option>
-                <option value="March">March</option>
-                <option value="April">April</option>
-                <option value="May">May</option>
-                <option value="June">June</option>
-                <option value="July">July</option>
-                <option value="August">August</option>
-                <option value="September">September</option>
-                <option value="October">October</option>
-                <option value="November">November</option>
-                <option value="December" selected>December</option>
+                <option>January</option><option>February</option><option>March</option>
+                <option>April</option><option>May</option><option>June</option>
+                <option>July</option><option>August</option><option>September</option>
+                <option>October</option><option>November</option>
+                <option selected>December</option>
               </select>
             </div>
-            <div class="form-group">
+            <div class="field">
               <label>Year</label>
               <select id="dlBulkEndYear"></select>
             </div>
           </div>
-        </section>
+        </div>
 
-        <div style="display:flex;gap:8px;padding-bottom:4px;">
-          <button class="btn-success btn-lg" id="dlBulkDownloadBtn" style="flex:1;">📦 Bulk Download &amp; ZIP</button>
-          <button class="btn-danger" id="dlBulkStopBtn" disabled style="padding:10px 14px;">Stop</button>
+        <!-- Sticky action strip for bulk -->
+        <div class="action-strip">
+          <button class="btn-run" id="dlBulkDownloadBtn">↓ Bulk Download &amp; ZIP</button>
+          <button class="btn-danger" id="dlBulkStopBtn" disabled>■ Stop</button>
         </div>
 
       </div><!-- /config-panel -->
 
-      <!-- Right: Captcha + Download Log -->
+      <!-- ── Progress & Log Column ──────────────────────────────── -->
       <div class="progress-panel">
 
-        <section class="card captcha-section hidden" id="dlCaptchaSection">
-          <h2><span class="icon">🔐</span> Captcha Verification</h2>
-          <div class="captcha-img-wrap">
-            <img id="dlCaptchaImg" src="" alt="CAPTCHA">
-          </div>
-          <div class="captcha-input-row">
-            <input type="text" id="dlCaptchaInput" placeholder="Type captcha here…" autocomplete="off" spellcheck="false">
-            <button class="btn-warning" id="dlCaptchaSubmitBtn">Submit</button>
-            <button class="btn-secondary" id="dlCaptchaRefreshBtn" title="Refresh captcha">↺</button>
-          </div>
-          <div id="dlCaptchaError" class="captcha-error hidden"></div>
-        </section>
-
-        <section class="card hidden" id="dlBulkProgressCard">
-          <h2><span class="icon">📦</span> Bulk Download Progress</h2>
+        <!-- Bulk Progress (hidden until bulk starts) -->
+        <div class="p-section hidden" id="dlBulkProgressCard">
           <div class="progress-bar-wrap">
             <div class="progress-bar" id="dlBulkProgressBar"></div>
           </div>
@@ -419,26 +378,57 @@
             <span id="dlBulkProgressLabel">Starting…</span>
             <span id="dlBulkProgressPct"></span>
           </div>
-          <div class="summary-counts" id="dlBulkCounts" style="margin-top:6px;"></div>
-        </section>
+          <div class="summary-counts" id="dlBulkCounts" style="margin-top:2px;"></div>
+        </div>
 
-        <section class="card">
-          <h2><span class="icon">📋</span> Download Log</h2>
-          <div id="dlStatus" class="dl-status hidden" style="margin-bottom:10px;"></div>
+        <!-- Download Log -->
+        <div class="p-section">
+          <div id="dlStatus" class="dl-status hidden"></div>
           <div class="log" id="dlLog"></div>
-        </section>
+        </div>
 
       </div><!-- /progress-panel -->
-
     </div><!-- /panel-body -->
-  </div><!-- /tab-download -->
+  </div><!-- #tab-download -->
 
 </div><!-- /tab-panels -->
 
-<!-- ── Footer ───────────────────────────────────────────────────────────────── -->
+<!-- ── Footer ─────────────────────────────────────────────────── -->
 <footer class="app-footer">
-  For errors, queries or feedback — <a href="mailto:siddharthnahata492@gmail.com">siddharthnahata492@gmail.com</a>
+  For errors or feedback — <a href="mailto:siddharthnahata492@gmail.com">siddharthnahata492@gmail.com</a>
 </footer>
+
+<!-- ── Captcha Modals — fixed overlays, outside tab panels ──────── -->
+
+<div class="captcha-modal hidden" id="captchaSection">
+  <div class="captcha-box">
+    <div class="captcha-box-title">🔐 Captcha Required</div>
+    <div class="captcha-img-wrap">
+      <img id="captchaImg" src="" alt="CAPTCHA">
+    </div>
+    <div class="captcha-input-row">
+      <input type="text" id="captchaInput" placeholder="Enter captcha" autocomplete="off" spellcheck="false">
+      <button class="btn-warning" id="captchaSubmitBtn">Submit</button>
+      <button class="btn-secondary" id="captchaRefreshBtn" title="Refresh captcha">↺</button>
+    </div>
+    <div id="captchaError" class="captcha-error hidden"></div>
+  </div>
+</div>
+
+<div class="captcha-modal hidden" id="dlCaptchaSection">
+  <div class="captcha-box">
+    <div class="captcha-box-title">🔐 Captcha Required</div>
+    <div class="captcha-img-wrap">
+      <img id="dlCaptchaImg" src="" alt="CAPTCHA">
+    </div>
+    <div class="captcha-input-row">
+      <input type="text" id="dlCaptchaInput" placeholder="Enter captcha" autocomplete="off" spellcheck="false">
+      <button class="btn-warning" id="dlCaptchaSubmitBtn">Submit</button>
+      <button class="btn-secondary" id="dlCaptchaRefreshBtn" title="Refresh captcha">↺</button>
+    </div>
+    <div id="dlCaptchaError" class="captcha-error hidden"></div>
+  </div>
+</div>
 
 <script src="renderer.js"></script>
 </body>
