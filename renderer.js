@@ -3,8 +3,10 @@
 // ── State ─────────────────────────────────────────────────────────────────────
 const state = {
   // shared
-  endpoint: null,
-  apiKey:   null,
+  endpoint:       null,
+  apiKey:         null,
+  activeUsername: null,
+  activePassword: null,
 
   // Tab 1 — Filing Status
   sessionId:      null,
@@ -266,14 +268,17 @@ async function showCaptchaAndWait(base64) {
 }
 
 // ── Tab 1 login ───────────────────────────────────────────────────────────────
-async function doLogin() {
+async function doLogin(username, password) {
   const endpoint = state.endpoint;
   const apiKey   = state.apiKey;
-  const username = val('username');
-  const password = $('password').value;
+  const uname    = username !== undefined ? username : val('username');
+  const pwd      = password !== undefined ? password : $('password').value;
 
-  addLog(`Logging in as "${username}"…`, 'step');
-  const res = await window.gstApp.login({ endpoint, apiKey, username, password });
+  state.activeUsername = uname;
+  state.activePassword = pwd;
+
+  addLog(`Logging in as "${uname}"…`, 'step');
+  const res = await window.gstApp.login({ endpoint, apiKey, username: uname, password: pwd });
   throwIfApiKeyError(res);
 
   if (!res.ok) throw new Error(`Login failed: ${res.error || `HTTP ${res.httpStatus}`}`);
@@ -306,8 +311,8 @@ $('captchaRefreshBtn').addEventListener('click', async () => {
     const res = await window.gstApp.login({
       endpoint: state.endpoint,
       apiKey:   state.apiKey,
-      username: val('username'),
-      password: $('password').value,
+      username: state.activeUsername || val('username'),
+      password: state.activePassword || $('password').value,
     });
     if (isApiKeyError(res)) {
       const err = new ApiKeyError('API authentication error — try restarting the app.');
@@ -385,7 +390,7 @@ async function handleCaptchaSubmit() {
 async function reAuthenticate() {
   addLog('⚠ Session expired — re-authenticating…', 'warn');
   setStatus('Re-authenticating…', 'running');
-  await doLogin();
+  await doLogin(state.activeUsername, state.activePassword);
   setStatus('Running…', 'running');
 }
 
@@ -429,57 +434,96 @@ async function processSingleGSTIN(gstin, name, email, financialYear, targetMonth
 }
 
 async function runBatch() {
-  const rows        = state.inputRows;
-  const total       = rows.length;
-  const month       = $('month').value;
-  const year        = parseInt($('year').value);
-  const returnType  = $('returnType').value;
+  const rows          = state.inputRows;
+  const total         = rows.length;
+  const month         = $('month').value;
+  const year          = parseInt($('year').value);
+  const returnType    = $('returnType').value;
   const financialYear = getFinancialYear(month, year);
 
-  addLog(`─── Batch start: ${total} GSTINs | ${month} ${year} | FY ${financialYear} | ${returnType} ───`, 'step');
+  const defaultUsername = val('username');
+  const defaultPassword = $('password').value;
+  const hasPerRowCreds  = rows.some(r => r.username);
 
-  let filed = 0, notFiled = 0, errored = 0, invalid = 0;
+  // Build credential groups (preserving row order within each group)
+  let groups;
+  if (hasPerRowCreds) {
+    const credMap = new Map();
+    groups = [];
+    for (const row of rows) {
+      const u = row.username || defaultUsername;
+      const p = row.password || defaultPassword;
+      const key = `${u}\x00${p}`;
+      if (!credMap.has(key)) {
+        const grp = { username: u, password: p, rows: [] };
+        credMap.set(key, grp);
+        groups.push(grp);
+      }
+      credMap.get(key).rows.push(row);
+    }
+  } else {
+    groups = [{ username: defaultUsername, password: defaultPassword, rows }];
+  }
+
+  addLog(`─── Batch start: ${total} GSTINs | ${month} ${year} | FY ${financialYear} | ${returnType}${groups.length > 1 ? ` | ${groups.length} credential groups` : ''} ───`, 'step');
+
+  let filed = 0, notFiled = 0, errored = 0, invalid = 0, seq = 0;
   const results = [];
 
   show('summaryCounts');
   updateSummaryCounts(0, 0, 0, 0, 0);
 
-  for (let i = 0; i < rows.length; i++) {
-    if (!state.isRunning) { addLog('Run stopped by user.', 'warn'); break; }
+  for (let g = 0; g < groups.length; g++) {
+    if (!state.isRunning) break;
 
-    const { gstin, email, name = '' } = rows[i];
-    setProgress(i, total, `Processing ${i + 1} / ${total}: ${gstin}`);
+    const group = groups[g];
 
-    // Validate GSTIN format before hitting the API
-    if (!isValidGSTIN(gstin)) {
-      invalid++;
-      const result = { gstin, name, email, status: 'Invalid GSTIN', dof: '', arn: '', note: `Bad format (${gstin.length} chars)` };
+    // Logout previous group's session before switching credentials
+    if (g > 0 && state.sessionId) {
+      try { await window.gstApp.logout({ endpoint: state.endpoint, apiKey: state.apiKey, sessionId: state.sessionId }); } catch (_) {}
+      state.sessionId = null;
+    }
+
+    if (groups.length > 1) addLog(`─── Account ${g + 1}/${groups.length}: "${group.username}" (${group.rows.length} GSTINs) ───`, 'step');
+    await doLogin(group.username, group.password);
+
+    for (let i = 0; i < group.rows.length; i++) {
+      if (!state.isRunning) { addLog('Run stopped by user.', 'warn'); break; }
+
+      seq++;
+      const { gstin, email, name = '' } = group.rows[i];
+      setProgress(seq - 1, total, `Processing ${seq} / ${total}: ${gstin}`);
+
+      if (!isValidGSTIN(gstin)) {
+        invalid++;
+        const result = { gstin, name, email, status: 'Invalid GSTIN', dof: '', arn: '', note: `Bad format (${gstin.length} chars)` };
+        results.push(result);
+        addLog(`[${seq}/${total}] ${gstin} → Invalid GSTIN — skipped`, 'warn');
+        appendResultRow(results.length, result);
+        updateSummaryCounts(filed, notFiled, errored, 0, invalid);
+        continue;
+      }
+
+      let result;
+      try {
+        result = await processSingleGSTIN(gstin, name, email, financialYear, month, returnType);
+      } catch (e) {
+        if (e.name === 'ApiKeyError') throw e;
+        result = { gstin, name, email, status: 'Error', dof: '', arn: '', note: e.message };
+      }
+
       results.push(result);
-      addLog(`[${i+1}/${total}] ${gstin} → Invalid GSTIN — skipped`, 'warn');
-      appendResultRow(results.length, result);
+
+      if (result.status === 'Filed')          { filed++;    addLog(`[${seq}/${total}] ${gstin} → Filed (${result.dof})${result.note ? ' — ' + result.note : ''}`, 'ok'); }
+      else if (result.status === 'Not Filed') { notFiled++; addLog(`[${seq}/${total}] ${gstin} → Not Filed`, 'warn'); }
+      else                                    { errored++;  addLog(`[${seq}/${total}] ${gstin} → Error: ${result.note}`, 'error'); }
+
       updateSummaryCounts(filed, notFiled, errored, 0, invalid);
-      continue;
-    }
+      appendResultRow(results.length, result);
 
-    let result;
-    try {
-      result = await processSingleGSTIN(gstin, name, email, financialYear, month, returnType);
-    } catch (e) {
-      if (e.name === 'ApiKeyError') throw e;
-      result = { gstin, name, email, status: 'Error', dof: '', arn: '', note: e.message };
-    }
-
-    results.push(result);
-
-    if (result.status === 'Filed')          { filed++;    addLog(`[${i+1}/${total}] ${gstin} → Filed (${result.dof})${result.note ? ' — ' + result.note : ''}`, 'ok'); }
-    else if (result.status === 'Not Filed') { notFiled++; addLog(`[${i+1}/${total}] ${gstin} → Not Filed`, 'warn'); }
-    else                                    { errored++;  addLog(`[${i+1}/${total}] ${gstin} → Error: ${result.note}`, 'error'); }
-
-    updateSummaryCounts(filed, notFiled, errored, 0, invalid);
-    appendResultRow(results.length, result);
-
-    if (i < rows.length - 1 && state.isRunning) {
-      await sleep(300 + Math.random() * 200);
+      if (i < group.rows.length - 1 && state.isRunning) {
+        await sleep(300 + Math.random() * 200);
+      }
     }
   }
 
@@ -595,10 +639,11 @@ async function sendEmails() {
 
 // ── Run button ────────────────────────────────────────────────────────────────
 $('runBtn').addEventListener('click', async () => {
-  if (!state.endpoint)         { alert('Local API not ready. Please wait a moment and try again.'); return; }
-  if (!val('username'))        { alert('Enter the GST Portal username.');                  return; }
-  if (!$('password').value)    { alert('Enter the portal password.');                     return; }
-  if (!state.inputRows.length) { alert('Select an input file with GSTINs first.');        return; }
+  if (!state.endpoint) { alert('Local API not ready. Please wait a moment and try again.'); return; }
+  if (!state.inputRows.length) { alert('Select an input file with GSTINs first.'); return; }
+  const hasPerRowCreds = state.inputRows.some(r => r.username && r.password);
+  if (!val('username') && !hasPerRowCreds) { alert('Enter the GST Portal username (or include a Username column in the input file).'); return; }
+  if (!$('password').value && !hasPerRowCreds) { alert('Enter the portal password (or include a Password column in the input file).'); return; }
 
   state.isRunning = true;
   state.results   = [];
@@ -617,7 +662,6 @@ $('runBtn').addEventListener('click', async () => {
     if (!health.ok) throw new Error(`Cannot reach API — ${health.error || `HTTP ${health.httpStatus}`}`);
     addLog('Endpoint reachable.', 'ok');
 
-    await doLogin();
     const { filed, notFiled, errored } = await runBatch();
 
     addLog('Batch complete. Use "Save Excel" to export results or "Send Emails" to notify defaulters.', 'ok');
@@ -1189,10 +1233,12 @@ $('browseBtn').addEventListener('click', async () => {
     state.inputRows = [];
   } else {
     state.inputRows = result.rows;
+    const credNote  = (result.hasUsername && result.hasPassword) ? ' · Credentials ✓' : result.hasUsername ? ' · Username ✓' : '';
     const nameNote  = result.hasName  ? ' · Name ✓'  : '';
     const emailNote = result.hasEmail ? ' · Email ✓' : '';
-    fileInfo.textContent = `✓ ${result.total} GSTINs loaded${nameNote}${emailNote}`;
-    addLog(`File loaded: ${result.total} GSTINs${result.hasName ? ' (with name)' : ''}${result.hasEmail ? ' (with email)' : ''} — ${filePath}`, 'ok');
+    fileInfo.textContent = `✓ ${result.total} GSTINs loaded${credNote}${nameNote}${emailNote}`;
+    const multiAccount = result.hasUsername && result.hasPassword ? ' — per-row credentials detected' : '';
+    addLog(`File loaded: ${result.total} GSTINs${multiAccount} — ${filePath}`, 'ok');
   }
 });
 
@@ -1310,6 +1356,37 @@ async function deleteAccount(selId, logFn) {
     logFn(`Account "${acc.label}" deleted.`, 'info');
   }
 }
+
+// ── Credential import / export ────────────────────────────────────────────────
+async function importCredentials() {
+  const filePath = await window.gstApp.pickFile();
+  if (!filePath) return;
+
+  const result = await window.gstApp.readCredentialFile(filePath);
+  if (result.error) { addLog(`Import failed: ${result.error}`, 'error'); return; }
+
+  let added = 0, updated = 0;
+  for (const row of result.rows) {
+    const existing = savedAccounts.find(a => a.username === row.username);
+    const res = await window.gstApp.saveAccount({ label: row.label || row.username, username: row.username, password: row.password });
+    if (res.ok) existing ? updated++ : added++;
+  }
+
+  await loadAccounts();
+  addLog(`Credentials imported: ${added} added, ${updated} updated.`, 'ok');
+}
+
+async function exportCredentials() {
+  if (!savedAccounts.length) { alert('No saved accounts to export.'); return; }
+  const data = savedAccounts.map(a => ({ Label: a.label, Username: a.username }));
+  const res  = await window.gstApp.saveExcel({ data, defaultName: 'gst_accounts.xlsx' });
+  if (res.canceled) return;
+  if (res.ok) { addLog(`Accounts exported: ${res.filePath}`, 'ok'); window.gstApp.openFile(res.filePath); }
+  else        { addLog(`Export failed: ${res.error}`, 'error'); }
+}
+
+$('importCredsBtn').addEventListener('click', importCredentials);
+$('exportCredsBtn').addEventListener('click', exportCredentials);
 
 $('savedAccounts').addEventListener('change', () => onAccountSelect('savedAccounts', 'username', 'password'));
 $('saveAccountBtn').addEventListener('click', () => saveAccount(addLog, 'username', 'password'));

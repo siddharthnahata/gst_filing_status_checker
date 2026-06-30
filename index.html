@@ -52,6 +52,10 @@
               <button class="btn-icon" id="saveAccountBtn" title="Save current credentials">💾</button>
               <button class="btn-icon btn-icon-danger" id="deleteAccountBtn" title="Delete selected">✕</button>
             </div>
+            <div class="accounts-bulk-row">
+              <button class="btn-xs btn-secondary" id="importCredsBtn">⬆ Import from Excel</button>
+              <button class="btn-xs btn-secondary" id="exportCredsBtn">⬇ Export Usernames</button>
+            </div>
           </div>
           <div class="form-group">
             <label>Username (CA's GST Portal User ID)</label>
@@ -66,7 +70,7 @@
         <section class="card">
           <h2><span class="icon">📂</span> Input File</h2>
           <div class="form-group">
-            <label>CSV or Excel — needs <strong>GSTIN</strong> column (optional: Name, Email/Mail)</label>
+            <label>CSV or Excel — columns: <strong>GSTIN</strong> · Username · Password · Email · Name (Username &amp; Password optional — falls back to login above)</label>
             <div class="file-picker">
               <input type="text" id="filePath" readonly placeholder="No file selected…">
               <button class="btn-secondary" id="browseBtn">Browse</button>

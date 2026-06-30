@@ -324,9 +324,12 @@ ipcMain.handle('read-input-file', (_event, filePath) => {
     if (rawData.length === 0) return { error: 'File is empty or has no data rows.' };
 
     const headers = Object.keys(rawData[0]);
-    const gstinCol = headers.find(h => h.trim().toLowerCase() === 'gstin');
-    const emailCol = headers.find(h => ['email', 'mail', 'e-mail'].includes(h.trim().toLowerCase()));
-    const nameCol  = headers.find(h => ['name','party name','trade name','legal name','firm name','client name','taxpayer name'].includes(h.trim().toLowerCase()));
+    const norm    = h => h.trim().toLowerCase();
+    const gstinCol    = headers.find(h => norm(h) === 'gstin');
+    const emailCol    = headers.find(h => ['email','mail','e-mail'].includes(norm(h)));
+    const nameCol     = headers.find(h => ['name','party name','trade name','legal name','firm name','client name','taxpayer name'].includes(norm(h)));
+    const usernameCol = headers.find(h => ['username','user name','user','login'].includes(norm(h)));
+    const passwordCol = headers.find(h => ['password','pass','passwd','pwd'].includes(norm(h)));
 
     if (!gstinCol) {
       return { error: `No "GSTIN" column found. Columns detected: ${headers.join(', ')}` };
@@ -334,15 +337,51 @@ ipcMain.handle('read-input-file', (_event, filePath) => {
 
     const rows = rawData
       .map(row => ({
-        gstin: String(row[gstinCol] || '').trim().toUpperCase(),
-        email: emailCol ? String(row[emailCol] || '').trim() : '',
-        name:  nameCol  ? String(row[nameCol]  || '').trim() : '',
+        gstin:    String(row[gstinCol]    || '').trim().toUpperCase(),
+        email:    emailCol    ? String(row[emailCol]    || '').trim() : '',
+        name:     nameCol     ? String(row[nameCol]     || '').trim() : '',
+        username: usernameCol ? String(row[usernameCol] || '').trim() : '',
+        password: passwordCol ? String(row[passwordCol] || '').trim() : '',
       }))
       .filter(r => r.gstin.length > 0);
 
     if (rows.length === 0) return { error: 'GSTIN column found but no values.' };
 
-    return { rows, total: rows.length, hasEmail: !!emailCol, hasName: !!nameCol };
+    return { rows, total: rows.length, hasEmail: !!emailCol, hasName: !!nameCol, hasUsername: !!usernameCol, hasPassword: !!passwordCol };
+  } catch (e) {
+    return { error: `Failed to read file: ${e.message}` };
+  }
+});
+
+ipcMain.handle('read-credential-file', (_event, filePath) => {
+  try {
+    const workbook = xlsx.readFile(filePath, { codepage: 65001 });
+    const sheet    = workbook.Sheets[workbook.SheetNames[0]];
+    const rawData  = xlsx.utils.sheet_to_json(sheet, { defval: '' });
+
+    if (rawData.length === 0) return { error: 'File is empty.' };
+
+    const headers     = Object.keys(rawData[0]);
+    const norm        = h => h.trim().toLowerCase();
+    const usernameCol = headers.find(h => ['username','user name','user','login'].includes(norm(h)));
+    const passwordCol = headers.find(h => ['password','pass','passwd','pwd'].includes(norm(h)));
+    const labelCol    = headers.find(h => ['label','name','account','account name'].includes(norm(h)));
+
+    if (!usernameCol || !passwordCol) {
+      return { error: `Need "Username" and "Password" columns. Found: ${headers.join(', ')}` };
+    }
+
+    const rows = rawData
+      .map(row => ({
+        username: String(row[usernameCol] || '').trim(),
+        password: String(row[passwordCol] || '').trim(),
+        label:    labelCol ? String(row[labelCol] || '').trim() : '',
+      }))
+      .filter(r => r.username && r.password);
+
+    if (rows.length === 0) return { error: 'No valid rows found (Username and Password must not be empty).' };
+
+    return { rows, total: rows.length };
   } catch (e) {
     return { error: `Failed to read file: ${e.message}` };
   }
