@@ -738,6 +738,7 @@ tr:hover td { background: var(--surface-2); }
 }
 
 .text-muted { color: var(--text-muted); font-size: 11px; }
+.label-optional { font-size: 10px; font-weight: 400; color: var(--text-light); }
 
 .mt-8 { margin-top: 8px; }
 

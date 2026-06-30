@@ -1319,25 +1319,29 @@ async function loadAccounts() {
   }
 }
 
-async function onAccountSelect(selId, usernameId, passwordId) {
+async function onAccountSelect(selId, usernameId, passwordId, gstinId, emailId) {
   const id = $(selId).value;
   if (!id) return;
   const acc = savedAccounts.find(a => a.id === id);
   if (!acc) return;
   $(usernameId).value = acc.username;
+  if (gstinId && $(gstinId)) $(gstinId).value = acc.gstin || '';
+  if (emailId  && $(emailId))  $(emailId).value  = acc.email  || '';
   const res = await window.gstApp.getAccountPassword({ id });
   if (res.ok) $(passwordId).value = res.password;
 }
 
-async function saveAccount(logFn, usernameId, passwordId) {
+async function saveAccount(logFn, usernameId, passwordId, gstinId, emailId) {
   const username = $(usernameId).value.trim();
   const password = $(passwordId).value;
+  const gstin    = gstinId && $(gstinId) ? $(gstinId).value.trim().toUpperCase() : '';
+  const email    = emailId  && $(emailId)  ? $(emailId).value.trim()  : '';
   if (!username || !password) { alert('Enter username and password before saving.'); return; }
-  const res = await window.gstApp.saveAccount({ label: username, username, password });
+  const res = await window.gstApp.saveAccount({ label: username, username, password, gstin, email });
   if (res.ok) {
     await loadAccounts();
-    $('savedAccounts').value = res.id;
-    $('dlSavedAccounts').value = res.id;
+    $('savedAccounts').value    = res.id;
+    $('dlSavedAccounts').value  = res.id;
     logFn(`Account "${username}" saved.`, 'ok');
   } else {
     alert(`Failed to save account: ${res.error}`);
@@ -1368,7 +1372,7 @@ async function importCredentials() {
   let added = 0, updated = 0;
   for (const row of result.rows) {
     const existing = savedAccounts.find(a => a.username === row.username);
-    const res = await window.gstApp.saveAccount({ label: row.label || row.username, username: row.username, password: row.password });
+    const res = await window.gstApp.saveAccount({ label: row.label || row.username, username: row.username, password: row.password, gstin: row.gstin || '', email: row.email || '' });
     if (res.ok) existing ? updated++ : added++;
   }
 
@@ -1378,22 +1382,27 @@ async function importCredentials() {
 
 async function exportCredentials() {
   if (!savedAccounts.length) { alert('No saved accounts to export.'); return; }
-  const data = savedAccounts.map(a => ({ Label: a.label, Username: a.username }));
+  if (!confirm('Export will include decrypted passwords.\n\nKeep the exported file secure. Continue?')) return;
+
+  const all = await window.gstApp.exportAllAccounts();
+  if (all.error) { addLog(`Export failed: ${all.error}`, 'error'); return; }
+
+  const data = all.map(a => ({ Label: a.label, Username: a.username, Password: a.password, GSTIN: a.gstin, Email: a.email }));
   const res  = await window.gstApp.saveExcel({ data, defaultName: 'gst_accounts.xlsx' });
   if (res.canceled) return;
-  if (res.ok) { addLog(`Accounts exported: ${res.filePath}`, 'ok'); window.gstApp.openFile(res.filePath); }
+  if (res.ok) { addLog(`Accounts exported (${all.length}): ${res.filePath}`, 'ok'); window.gstApp.openFile(res.filePath); }
   else        { addLog(`Export failed: ${res.error}`, 'error'); }
 }
 
 $('importCredsBtn').addEventListener('click', importCredentials);
 $('exportCredsBtn').addEventListener('click', exportCredentials);
 
-$('savedAccounts').addEventListener('change', () => onAccountSelect('savedAccounts', 'username', 'password'));
-$('saveAccountBtn').addEventListener('click', () => saveAccount(addLog, 'username', 'password'));
+$('savedAccounts').addEventListener('change', () => onAccountSelect('savedAccounts', 'username', 'password', 'accountGstin', 'accountEmail'));
+$('saveAccountBtn').addEventListener('click', () => saveAccount(addLog, 'username', 'password', 'accountGstin', 'accountEmail'));
 $('deleteAccountBtn').addEventListener('click', () => deleteAccount('savedAccounts', addLog));
 
-$('dlSavedAccounts').addEventListener('change', () => onAccountSelect('dlSavedAccounts', 'dlUsername', 'dlPassword'));
-$('dlSaveAccountBtn').addEventListener('click', () => saveAccount(addDlLog, 'dlUsername', 'dlPassword'));
+$('dlSavedAccounts').addEventListener('change', () => onAccountSelect('dlSavedAccounts', 'dlUsername', 'dlPassword', 'dlAccountGstin', 'dlAccountEmail'));
+$('dlSaveAccountBtn').addEventListener('click', () => saveAccount(addDlLog, 'dlUsername', 'dlPassword', 'dlAccountGstin', 'dlAccountEmail'));
 $('dlDeleteAccountBtn').addEventListener('click', () => deleteAccount('dlSavedAccounts', addDlLog));
 
 // ── Local API status bar ──────────────────────────────────────────────────────

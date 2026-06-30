@@ -251,26 +251,40 @@ ipcMain.handle('report-captcha', (_event, { captchaText, captchaBase64 }) => {
 });
 
 ipcMain.handle('list-accounts', () => {
-  return readAccounts().map(({ id, label, username }) => ({ id, label, username }));
+  return readAccounts().map(({ id, label, username, gstin, email }) => ({ id, label, username, gstin: gstin || '', email: email || '' }));
 });
 
-ipcMain.handle('save-account', (_event, { label, username, password }) => {
+ipcMain.handle('save-account', (_event, { label, username, password, gstin, email }) => {
   try {
     if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'Encryption not available on this system' };
     const accounts = readAccounts();
     const encryptedPassword = safeStorage.encryptString(password).toString('base64');
     const existing = accounts.find(a => a.username === username);
     if (existing) {
-      existing.label = label || username;
+      existing.label            = label || username;
       existing.encryptedPassword = encryptedPassword;
+      existing.gstin            = gstin  || existing.gstin  || '';
+      existing.email            = email  || existing.email  || '';
     } else {
-      accounts.push({ id: crypto.randomUUID(), label: label || username, username, encryptedPassword });
+      accounts.push({ id: crypto.randomUUID(), label: label || username, username, encryptedPassword, gstin: gstin || '', email: email || '' });
     }
     writeAccounts(accounts);
     const saved = accounts.find(a => a.username === username);
     return { ok: true, id: saved.id };
   } catch (e) {
     return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('export-all-accounts', () => {
+  try {
+    return readAccounts().map(a => {
+      let password = '';
+      try { password = safeStorage.decryptString(Buffer.from(a.encryptedPassword, 'base64')); } catch (_) {}
+      return { label: a.label, username: a.username, password, gstin: a.gstin || '', email: a.email || '' };
+    });
+  } catch (e) {
+    return { error: e.message };
   }
 });
 
@@ -366,6 +380,8 @@ ipcMain.handle('read-credential-file', (_event, filePath) => {
     const usernameCol = headers.find(h => ['username','user name','user','login'].includes(norm(h)));
     const passwordCol = headers.find(h => ['password','pass','passwd','pwd'].includes(norm(h)));
     const labelCol    = headers.find(h => ['label','name','account','account name'].includes(norm(h)));
+    const gstinCol    = headers.find(h => norm(h) === 'gstin');
+    const emailCol    = headers.find(h => ['email','mail','e-mail'].includes(norm(h)));
 
     if (!usernameCol || !passwordCol) {
       return { error: `Need "Username" and "Password" columns. Found: ${headers.join(', ')}` };
@@ -376,6 +392,8 @@ ipcMain.handle('read-credential-file', (_event, filePath) => {
         username: String(row[usernameCol] || '').trim(),
         password: String(row[passwordCol] || '').trim(),
         label:    labelCol ? String(row[labelCol] || '').trim() : '',
+        gstin:    gstinCol ? String(row[gstinCol] || '').trim().toUpperCase() : '',
+        email:    emailCol ? String(row[emailCol] || '').trim() : '',
       }))
       .filter(r => r.username && r.password);
 
