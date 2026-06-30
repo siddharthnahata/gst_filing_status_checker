@@ -1576,7 +1576,17 @@ async function initLocalApi() {
   addLog('Select a file, set login credentials, then click Login & Run.', 'info');
   addDlLog('For PDF downloads, enter client credentials and click Login & Download PDF.', 'info');
 
+  const appVersion = await window.gstApp.getAppVersion();
+  if (appVersion) $('appVersionLabel').textContent = `v${appVersion}`;
+
+  function compareSemver(a, b) {
+    const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+    for (let i = 0; i < 3; i++) { if (pa[i] !== pb[i]) return pa[i] - pb[i]; }
+    return 0;
+  }
+
   window.gstApp.onUpdateStatus(data => {
+    if (appVersion && compareSemver(data.version, appVersion) <= 0) return; // stale cache, ignore
     if (data.type === 'available') {
       $('updateBannerText').textContent = `Update v${data.version} is downloading in the background…`;
       show('updateBanner');

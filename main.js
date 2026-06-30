@@ -231,13 +231,16 @@ function setupAutoUpdater() {
     console.error('[updater] Error:', err.message);
   });
 
-  // Check 12 s after startup so it doesn't delay app launch
+  // Check 12 s after startup, then every hour
   setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 12000);
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 60 * 60 * 1000);
 }
 
 ipcMain.handle('install-update', () => {
   autoUpdater.quitAndInstall(false, true); // isSilent=false, isForceRunAfter=true
 });
+
+ipcMain.handle('get-app-version', () => app.getVersion());
 
 app.whenReady().then(async () => {
   await fetchRemoteConfig();
