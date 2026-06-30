@@ -1242,6 +1242,42 @@ $('browseBtn').addEventListener('click', async () => {
   }
 });
 
+$('loadFromDbBtn').addEventListener('click', async () => {
+  const fileInfo = $('fileInfo');
+  fileInfo.className   = 'file-info';
+  fileInfo.textContent = 'Loading accounts…';
+  show('fileInfo');
+
+  const accounts = await window.gstApp.listAccounts();
+  const withGstin = accounts.filter(a => a.gstin && a.gstin.trim());
+  const skipped   = accounts.length - withGstin.length;
+
+  if (!withGstin.length) {
+    fileInfo.className   = 'file-info error';
+    fileInfo.textContent = `⚠ No saved accounts have a GSTIN — save accounts with GSTIN first.`;
+    state.inputRows = [];
+    return;
+  }
+
+  // Decrypt passwords for each account
+  const rows = [];
+  for (const acc of withGstin) {
+    const res = await window.gstApp.getAccountPassword({ id: acc.id });
+    rows.push({
+      gstin:    acc.gstin.trim().toUpperCase(),
+      username: acc.username,
+      password: res.ok ? res.password : '',
+      email:    acc.email || '',
+      name:     acc.label || acc.username,
+    });
+  }
+
+  state.inputRows      = rows;
+  $('filePath').value  = '— Saved Accounts Database —';
+  fileInfo.textContent = `✓ ${rows.length} GSTINs loaded from database · Credentials ✓${skipped ? ` (${skipped} skipped — no GSTIN)` : ''}`;
+  addLog(`DB loaded: ${rows.length} accounts${skipped ? `, ${skipped} skipped (no GSTIN)` : ''} — per-row credentials`, 'ok');
+});
+
 $('smtpSecure').addEventListener('change', () => { $('smtpPort').value = $('smtpSecure').value; });
 $('smtpPort').addEventListener('change', () => {
   const p = val('smtpPort');

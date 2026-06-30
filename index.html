@@ -78,14 +78,16 @@
         </section>
 
         <section class="card">
-          <h2><span class="icon">📂</span> Input File</h2>
+          <h2><span class="icon">📂</span> Input Source</h2>
           <div class="form-group">
-            <label>CSV or Excel — columns: <strong>GSTIN</strong> · Username · Password · Email · Name (Username &amp; Password optional — falls back to login above)</label>
+            <label>From Excel / CSV — columns: <strong>GSTIN</strong> · Username · Password · Email · Name</label>
             <div class="file-picker">
               <input type="text" id="filePath" readonly placeholder="No file selected…">
               <button class="btn-secondary" id="browseBtn">Browse</button>
             </div>
           </div>
+          <div style="text-align:center;font-size:10px;color:var(--text-dim);margin:4px 0;letter-spacing:.08em;">— OR —</div>
+          <button class="btn-secondary btn-lg" id="loadFromDbBtn" style="margin-top:0;">🗄 Load from Saved Accounts</button>
           <div id="fileInfo" class="file-info hidden"></div>
         </section>
 
