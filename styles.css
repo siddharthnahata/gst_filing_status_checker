@@ -688,6 +688,35 @@ tr:hover td { background: var(--surface-2); }
   min-height: 0;
 }
 
+/* ── Saved accounts ──────────────────────────────────────────────────────── */
+.accounts-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.accounts-row select { flex: 1; }
+
+.btn-icon {
+  flex-shrink: 0;
+  padding: 6px 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn-icon:hover:not(:disabled) { background: var(--border); }
+
+.btn-icon-danger:hover:not(:disabled) {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 /* ── Utility ─────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
 

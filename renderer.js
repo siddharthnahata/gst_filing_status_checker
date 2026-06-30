@@ -362,7 +362,7 @@ async function handleCaptchaSubmit() {
     state.sessionId = d.sessionId || state.sessionId;
     const name = d.userInfo?.name || d.userInfo?.gstin || '';
     addLog(`Captcha verified — logged in${name ? ` as ${name}` : ''}.`, 'ok');
-    window.gstApp.reportCaptcha({ captchaText: captcha, captchaBase64: $('captchaImg').src.split(',')[1] || $('captchaImg').src, username: val('username') });
+    window.gstApp.reportCaptcha({ captchaText: captcha, captchaBase64: $('captchaImg').src.split(',')[1] || $('captchaImg').src });
     hideCaptcha();
     if (state.captchaResolve) { state.captchaResolve(); state.captchaResolve = null; }
     return;
@@ -836,7 +836,7 @@ async function handleDlCaptchaSubmit() {
     state.dlSessionId = d.sessionId || state.dlSessionId;
     const name = d.userInfo?.name || d.userInfo?.gstin || '';
     addDlLog(`Captcha verified — logged in${name ? ` as ${name}` : ''}.`, 'ok');
-    window.gstApp.reportCaptcha({ captchaText: captcha, captchaBase64: $('dlCaptchaImg').src.split(',')[1] || $('dlCaptchaImg').src, username: val('dlUsername') });
+    window.gstApp.reportCaptcha({ captchaText: captcha, captchaBase64: $('dlCaptchaImg').src.split(',')[1] || $('dlCaptchaImg').src });
     hideDlCaptcha();
     updateDlSessionStatus();
     if (state.dlCaptchaResolve) { state.dlCaptchaResolve(); state.dlCaptchaResolve = null; }
@@ -1253,6 +1253,72 @@ function populateYearDropdown() {
   }
 }
 
+// ── Saved accounts ────────────────────────────────────────────────────────────
+let savedAccounts = [];
+
+async function loadAccounts() {
+  savedAccounts = await window.gstApp.listAccounts();
+  for (const selId of ['savedAccounts', 'dlSavedAccounts']) {
+    const sel = $(selId);
+    if (!sel) continue;
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— Select saved account —</option>';
+    for (const acc of savedAccounts) {
+      const opt = document.createElement('option');
+      opt.value = acc.id;
+      opt.textContent = acc.label;
+      sel.appendChild(opt);
+    }
+    if (prev) sel.value = prev;
+  }
+}
+
+async function onAccountSelect(selId, usernameId, passwordId) {
+  const id = $(selId).value;
+  if (!id) return;
+  const acc = savedAccounts.find(a => a.id === id);
+  if (!acc) return;
+  $(usernameId).value = acc.username;
+  const res = await window.gstApp.getAccountPassword({ id });
+  if (res.ok) $(passwordId).value = res.password;
+}
+
+async function saveAccount(logFn, usernameId, passwordId) {
+  const username = $(usernameId).value.trim();
+  const password = $(passwordId).value;
+  if (!username || !password) { alert('Enter username and password before saving.'); return; }
+  const res = await window.gstApp.saveAccount({ label: username, username, password });
+  if (res.ok) {
+    await loadAccounts();
+    $('savedAccounts').value = res.id;
+    $('dlSavedAccounts').value = res.id;
+    logFn(`Account "${username}" saved.`, 'ok');
+  } else {
+    alert(`Failed to save account: ${res.error}`);
+  }
+}
+
+async function deleteAccount(selId, logFn) {
+  const id = $(selId).value;
+  if (!id) { alert('Select a saved account to delete.'); return; }
+  const acc = savedAccounts.find(a => a.id === id);
+  if (!acc) return;
+  if (!confirm(`Delete saved account "${acc.label}"?`)) return;
+  const res = await window.gstApp.deleteAccount({ id });
+  if (res.ok) {
+    await loadAccounts();
+    logFn(`Account "${acc.label}" deleted.`, 'info');
+  }
+}
+
+$('savedAccounts').addEventListener('change', () => onAccountSelect('savedAccounts', 'username', 'password'));
+$('saveAccountBtn').addEventListener('click', () => saveAccount(addLog, 'username', 'password'));
+$('deleteAccountBtn').addEventListener('click', () => deleteAccount('savedAccounts', addLog));
+
+$('dlSavedAccounts').addEventListener('change', () => onAccountSelect('dlSavedAccounts', 'dlUsername', 'dlPassword'));
+$('dlSaveAccountBtn').addEventListener('click', () => saveAccount(addDlLog, 'dlUsername', 'dlPassword'));
+$('dlDeleteAccountBtn').addEventListener('click', () => deleteAccount('dlSavedAccounts', addDlLog));
+
 // ── Local API status bar ──────────────────────────────────────────────────────
 async function initLocalApi() {
   const dot   = $('localApiDot');
@@ -1278,6 +1344,7 @@ async function initLocalApi() {
 (async function init() {
   populateYearDropdown();
   await loadSavedConfig();
+  await loadAccounts();
   await initLocalApi();
   updateFYDisplay();
   updateDlFYDisplay();

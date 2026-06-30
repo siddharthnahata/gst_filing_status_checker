@@ -44,6 +44,16 @@
         <section class="card">
           <h2><span class="icon">👤</span> Portal Login</h2>
           <div class="form-group">
+            <label>Saved Accounts</label>
+            <div class="accounts-row">
+              <select id="savedAccounts">
+                <option value="">— Select saved account —</option>
+              </select>
+              <button class="btn-icon" id="saveAccountBtn" title="Save current credentials">💾</button>
+              <button class="btn-icon btn-icon-danger" id="deleteAccountBtn" title="Delete selected">✕</button>
+            </div>
+          </div>
+          <div class="form-group">
             <label>Username (CA's GST Portal User ID)</label>
             <input type="text" id="username" placeholder="e.g. CA_username" autocomplete="off">
           </div>
@@ -229,6 +239,16 @@
           <div class="smtp-note">
             Log in as the <strong>client whose return you want to download</strong>.
             This is a separate session from the Filing Status tab.
+          </div>
+          <div class="form-group">
+            <label>Saved Accounts</label>
+            <div class="accounts-row">
+              <select id="dlSavedAccounts">
+                <option value="">— Select saved account —</option>
+              </select>
+              <button class="btn-icon" id="dlSaveAccountBtn" title="Save current credentials">💾</button>
+              <button class="btn-icon btn-icon-danger" id="dlDeleteAccountBtn" title="Delete selected">✕</button>
+            </div>
           </div>
           <div class="form-group">
             <label>Username (Client's GST Portal User ID)</label>

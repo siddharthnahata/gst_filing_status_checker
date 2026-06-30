@@ -1,9 +1,10 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, utilityProcess } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, utilityProcess, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const crypto = require('crypto');
 const xlsx = require('xlsx');
 const nodemailer = require('nodemailer');
 const JSZip = require('jszip');
@@ -80,6 +81,29 @@ function loadSecrets() {
 }
 
 const secrets = loadSecrets();
+
+// ── Machine ID (sent instead of username in captcha reports) ─────────────────
+
+function getMachineId() {
+  const cfg = loadConfig();
+  if (!cfg.machineId) {
+    cfg.machineId = crypto.randomUUID();
+    saveConfig(cfg);
+  }
+  return cfg.machineId;
+}
+
+// ── Accounts storage ──────────────────────────────────────────────────────────
+
+const getAccountsPath = () => path.join(app.getPath('userData'), 'accounts.json');
+
+function readAccounts() {
+  try { return JSON.parse(fs.readFileSync(getAccountsPath(), 'utf8')); } catch (_) { return []; }
+}
+
+function writeAccounts(accounts) {
+  fs.writeFileSync(getAccountsPath(), JSON.stringify(accounts, null, 2), 'utf8');
+}
 
 // ── Config persistence ────────────────────────────────────────────────────────
 
@@ -207,8 +231,9 @@ ipcMain.handle('log-error', (_event, { message, context }) => {
   return { ok: true };
 });
 
-ipcMain.handle('report-captcha', (_event, { captchaText, captchaBase64, username }) => {
+ipcMain.handle('report-captcha', (_event, { captchaText, captchaBase64 }) => {
   if (!secrets.captchaApiKey) return { ok: false, reason: 'no key' };
+  const source = getMachineId();
   // Fire-and-forget — never block the login flow
   fetch('http://43.205.243.55:3010/captchas', {
     method: 'POST',
@@ -216,13 +241,57 @@ ipcMain.handle('report-captcha', (_event, { captchaText, captchaBase64, username
       'Content-Type': 'application/json',
       'x-api-key': secrets.captchaApiKey,
     },
-    body: JSON.stringify({ captchaText, captchaBase64, username }),
+    body: JSON.stringify({ captchaText, captchaBase64, source }),
   }).then(r => r.json()).then(j => {
     console.log(`[captcha-report] saved=${j.saved} id=${j.id} total=${j.total}`);
   }).catch(e => {
     console.error(`[captcha-report] failed: ${e.message}`);
   });
   return { ok: true };
+});
+
+ipcMain.handle('list-accounts', () => {
+  return readAccounts().map(({ id, label, username }) => ({ id, label, username }));
+});
+
+ipcMain.handle('save-account', (_event, { label, username, password }) => {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'Encryption not available on this system' };
+    const accounts = readAccounts();
+    const encryptedPassword = safeStorage.encryptString(password).toString('base64');
+    const existing = accounts.find(a => a.username === username);
+    if (existing) {
+      existing.label = label || username;
+      existing.encryptedPassword = encryptedPassword;
+    } else {
+      accounts.push({ id: crypto.randomUUID(), label: label || username, username, encryptedPassword });
+    }
+    writeAccounts(accounts);
+    const saved = accounts.find(a => a.username === username);
+    return { ok: true, id: saved.id };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('delete-account', (_event, { id }) => {
+  try {
+    writeAccounts(readAccounts().filter(a => a.id !== id));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('get-account-password', (_event, { id }) => {
+  try {
+    const account = readAccounts().find(a => a.id === id);
+    if (!account) return { ok: false, error: 'Account not found' };
+    const password = safeStorage.decryptString(Buffer.from(account.encryptedPassword, 'base64'));
+    return { ok: true, password };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
 });
 
 ipcMain.handle('load-config', () => loadConfig());
