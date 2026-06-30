@@ -21,6 +21,7 @@ const state = {
   dlCaptchaResolve: null,
   dlCaptchaReject:  null,
   dlBulkRunning:    false,
+  dlAccountId:      null,  // set when a saved account is selected; cleared on manual edit
 };
 
 // ── API key error helpers ─────────────────────────────────────────────────────
@@ -848,7 +849,15 @@ async function doDownloadLogin() {
   const endpoint = state.endpoint;
   const apiKey   = state.apiKey;
   const username = val('dlUsername');
-  const password = $('dlPassword').value.trim();
+
+  let password;
+  if (state.dlAccountId) {
+    const pwRes = await window.gstApp.getAccountPassword({ id: state.dlAccountId });
+    if (!pwRes.ok) throw new Error('Could not decrypt saved password — please re-select the account or enter the password manually.');
+    password = pwRes.password.trim();
+  } else {
+    password = $('dlPassword').value.trim();
+  }
 
   if (!username || !password) throw new Error('Enter the client username and password first.');
 
@@ -1421,7 +1430,10 @@ async function loadAccounts() {
 
 async function onAccountSelect(selId, usernameId, passwordId, gstinId, emailId) {
   const id = $(selId).value;
-  if (!id) return;
+  if (!id) {
+    if (selId === 'dlSavedAccounts') state.dlAccountId = null;
+    return;
+  }
   const acc = savedAccounts.find(a => a.id === id);
   if (!acc) return;
   $(usernameId).value = acc.username;
@@ -1430,7 +1442,9 @@ async function onAccountSelect(selId, usernameId, passwordId, gstinId, emailId) 
   const res = await window.gstApp.getAccountPassword({ id });
   if (res.ok) {
     $(passwordId).value = res.password.trim();
+    if (selId === 'dlSavedAccounts') state.dlAccountId = id;
   } else {
+    if (selId === 'dlSavedAccounts') state.dlAccountId = null;
     addDlLog('⚠ Could not decrypt password for this account — enter it manually.', 'warn');
   }
 }
@@ -1524,6 +1538,8 @@ $('deleteAccountBtn').addEventListener('click', () => deleteAccount('savedAccoun
 $('dlSavedAccounts').addEventListener('change', () => onAccountSelect('dlSavedAccounts', 'dlUsername', 'dlPassword', 'dlAccountGstin', 'dlAccountEmail'));
 $('dlSaveAccountBtn').addEventListener('click', () => saveAccount(addDlLog, 'dlUsername', 'dlPassword', 'dlAccountGstin', 'dlAccountEmail'));
 $('dlDeleteAccountBtn').addEventListener('click', () => deleteAccount('dlSavedAccounts', addDlLog));
+$('dlUsername').addEventListener('input', () => { state.dlAccountId = null; });
+$('dlPassword').addEventListener('input', () => { state.dlAccountId = null; });
 
 // ── Local API status bar ──────────────────────────────────────────────────────
 async function initLocalApi() {
