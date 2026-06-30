@@ -27,4 +27,6 @@ contextBridge.exposeInMainWorld('gstApp', {
   downloadPdf:       (args) => ipcRenderer.invoke('api-download-pdf', args),
   savePdf:           (args) => ipcRenderer.invoke('save-pdf', args),
   saveZip:           (args) => ipcRenderer.invoke('save-zip', args),
+  installUpdate:     ()     => ipcRenderer.invoke('install-update'),
+  onUpdateStatus:    (cb)   => ipcRenderer.on('update-status', (_e, data) => cb(data)),
 });

@@ -7,6 +7,7 @@
     "start": "electron .",
     "pack": "electron-builder --dir",
     "dist": "npm run install-api && electron-builder",
+    "release": "npm run install-api && electron-builder --publish always",
     "install-api": "cd api && npm install --omit=dev"
   },
   "build": {
@@ -15,11 +16,20 @@
     "directories": {
       "output": "dist"
     },
+    "publish": {
+      "provider": "github",
+      "owner": "siddharthnahata",
+      "repo": "gst_filing_status_checker"
+    },
     "extraResources": [
       {
         "from": "api",
         "to": "api",
-        "filter": ["src/**", "node_modules/**", "package.json"]
+        "filter": [
+          "src/**",
+          "node_modules/**",
+          "package.json"
+        ]
       },
       {
         "from": "chromium",
@@ -31,7 +41,10 @@
       }
     ],
     "win": {
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
     "mac": {
       "target": "dmg"
@@ -41,6 +54,7 @@
     }
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "jszip": "^3.10.1",
     "nodemailer": "^6.9.9",
     "xlsx": "^0.18.5"

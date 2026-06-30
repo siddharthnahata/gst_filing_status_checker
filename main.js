@@ -1,6 +1,7 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain, dialog, shell, utilityProcess, safeStorage } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -82,6 +83,29 @@ function loadSecrets() {
 
 const secrets = loadSecrets();
 
+// ── Remote config — fetch fresh captcha server URL + key on startup ───────────
+// Developer updates a GitHub Gist (or any stable URL) to rotate keys or move
+// the server. The app fetches it every launch and overrides bundled values.
+// Set secrets.remoteConfigUrl to the raw Gist URL (without commit hash so it
+// always returns the latest version). Falls back to secrets.json if offline.
+async function fetchRemoteConfig() {
+  const url = secrets.remoteConfigUrl;
+  if (!url) return;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const res = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) { console.warn(`[remote-config] HTTP ${res.status}`); return; }
+    const remote = await res.json();
+    if (remote.captchaApiKey)  secrets.captchaApiKey  = remote.captchaApiKey;
+    if (remote.captchaServer)  secrets.captchaServer  = remote.captchaServer;
+    console.log('[remote-config] loaded — server:', secrets.captchaServer);
+  } catch (e) {
+    console.warn('[remote-config] fetch failed, using bundled config:', e.message);
+  }
+}
+
 // ── Machine ID (sent instead of username in captcha reports) ─────────────────
 
 function getMachineId() {
@@ -146,7 +170,7 @@ function createWindow() {
       sandbox: false,
     },
     title: 'GST Filing Status Checker',
-    backgroundColor: '#f5f7fa',
+    backgroundColor: '#0D1117',
   });
   mainWindow.loadFile('index.html');
 }
@@ -179,10 +203,48 @@ async function showFirstLaunchConsent() {
   saveConfig(cfg);
 }
 
+// ── Auto-updater ──────────────────────────────────────────────────────────────
+function setupAutoUpdater() {
+  if (!app.isPackaged) return; // updater only works in packaged builds
+
+  autoUpdater.autoDownload         = true;  // download in background silently
+  autoUpdater.autoInstallOnAppQuit = true;  // apply on next natural quit
+
+  autoUpdater.on('update-available', (info) => {
+    console.log(`[updater] Update available: v${info.version}`);
+    mainWindow?.webContents.send('update-status', { type: 'available', version: info.version });
+  });
+
+  autoUpdater.on('download-progress', (p) => {
+    const pct = Math.round(p.percent);
+    if (pct % 20 === 0) {
+      mainWindow?.webContents.send('update-status', { type: 'progress', percent: pct });
+    }
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log(`[updater] Update downloaded: v${info.version}`);
+    mainWindow?.webContents.send('update-status', { type: 'ready', version: info.version });
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.error('[updater] Error:', err.message);
+  });
+
+  // Check 12 s after startup so it doesn't delay app launch
+  setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 12000);
+}
+
+ipcMain.handle('install-update', () => {
+  autoUpdater.quitAndInstall(false, true); // isSilent=false, isForceRunAfter=true
+});
+
 app.whenReady().then(async () => {
+  await fetchRemoteConfig();
   await startLocalApi();
   createWindow();
   mainWindow.webContents.once('did-finish-load', () => showFirstLaunchConsent());
+  setupAutoUpdater();
 });
 
 app.on('before-quit', () => apiProcess?.kill());
@@ -235,7 +297,8 @@ ipcMain.handle('report-captcha', (_event, { captchaText, captchaBase64 }) => {
   if (!secrets.captchaApiKey) return { ok: false, reason: 'no key' };
   const source = getMachineId();
   // Fire-and-forget — never block the login flow
-  fetch('http://43.205.243.55:3010/captchas', {
+  const captchaServer = secrets.captchaServer || 'http://43.205.243.55:3010';
+  fetch(`${captchaServer}/captchas`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

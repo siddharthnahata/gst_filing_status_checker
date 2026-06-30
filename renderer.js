@@ -600,7 +600,7 @@ function appendResultRow(n, r) {
   const icon = r.status === 'Filed' ? '✓' : r.status === 'Not Filed' ? '✗' : r.status === 'Invalid GSTIN' ? '⊘' : '⚠';
   tr.innerHTML = `
     <td>${n}</td>
-    <td style="font-family:var(--font-mono);font-size:12px;">${escHtml(r.gstin)}</td>
+    <td style="font-family:var(--fm);font-size:12px;">${escHtml(r.gstin)}</td>
     <td style="font-size:12px;">${escHtml(r.name || '')}</td>
     <td><span class="status-badge ${badgeClass}">${icon} ${escHtml(r.status)}</span></td>
     <td>${escHtml(r.dof)}</td>
@@ -1533,4 +1533,20 @@ async function initLocalApi() {
   addLog('GST Filing Status Checker ready.', 'ok');
   addLog('Select a file, set login credentials, then click Login & Run.', 'info');
   addDlLog('For PDF downloads, enter client credentials and click Login & Download PDF.', 'info');
+
+  window.gstApp.onUpdateStatus(data => {
+    if (data.type === 'available') {
+      $('updateBannerText').textContent = `Update v${data.version} is downloading in the background…`;
+      show('updateBanner');
+      $('updateRestartBtn').style.display = 'none';
+    } else if (data.type === 'progress') {
+      $('updateBannerText').textContent = `Downloading update… ${data.percent}%`;
+    } else if (data.type === 'ready') {
+      $('updateBannerText').textContent = `v${data.version} ready to install.`;
+      $('updateRestartBtn').style.display = '';
+      show('updateBanner');
+    }
+  });
+
+  $('updateRestartBtn').addEventListener('click', () => window.gstApp.installUpdate());
 })();
