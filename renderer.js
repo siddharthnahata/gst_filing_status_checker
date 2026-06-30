@@ -848,7 +848,7 @@ async function doDownloadLogin() {
   const endpoint = state.endpoint;
   const apiKey   = state.apiKey;
   const username = val('dlUsername');
-  const password = $('dlPassword').value;
+  const password = $('dlPassword').value.trim();
 
   if (!username || !password) throw new Error('Enter the client username and password first.');
 
@@ -1429,7 +1429,7 @@ async function onAccountSelect(selId, usernameId, passwordId, gstinId, emailId) 
   if (emailId  && $(emailId))  $(emailId).value  = acc.email  || '';
   const res = await window.gstApp.getAccountPassword({ id });
   if (res.ok) {
-    $(passwordId).value = res.password;
+    $(passwordId).value = res.password.trim();
   } else {
     addDlLog('⚠ Could not decrypt password for this account — enter it manually.', 'warn');
   }
@@ -1437,7 +1437,7 @@ async function onAccountSelect(selId, usernameId, passwordId, gstinId, emailId) 
 
 async function saveAccount(logFn, usernameId, passwordId, gstinId, emailId) {
   const username = $(usernameId).value.trim();
-  const password = $(passwordId).value;
+  const password = $(passwordId).value.trim();
   const gstin    = gstinId && $(gstinId) ? $(gstinId).value.trim().toUpperCase() : '';
   const email    = emailId  && $(emailId)  ? $(emailId).value.trim()  : '';
   if (!username || !password) { alert('Enter username and password before saving.'); return; }
