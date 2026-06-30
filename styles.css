@@ -821,6 +821,19 @@ tr:last-child td { border-bottom: none; }
   color: var(--red);
 }
 
+.captcha-cancel-btn {
+  margin-top: 10px;
+  width: 100%;
+  padding: 5px 0;
+  font-size: 11px;
+  color: var(--t2);
+  background: none;
+  border: 1px solid var(--b1);
+  border-radius: var(--r);
+  cursor: pointer;
+}
+.captcha-cancel-btn:hover { color: var(--t1); border-color: var(--b2); background: var(--s2); }
+
 /* ── Download Panel specifics ───────────────────────────── */
 .dl-session-status {
   font-family: var(--fm);

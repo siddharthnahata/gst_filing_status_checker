@@ -359,6 +359,10 @@ async function doLogin(username, password) {
 // ── Tab 1 captcha handlers ────────────────────────────────────────────────────
 $('captchaSubmitBtn').addEventListener('click', handleCaptchaSubmit);
 $('captchaInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleCaptchaSubmit(); });
+$('captchaCancelBtn').addEventListener('click', () => {
+  hideCaptcha();
+  if (state.captchaReject) { state.captchaReject(new Error('Cancelled by user')); state.captchaReject = null; }
+});
 
 $('captchaRefreshBtn').addEventListener('click', async () => {
   $('captchaRefreshBtn').disabled = true;
@@ -877,6 +881,10 @@ async function doDownloadLogin() {
 // ── Tab 2 captcha handlers ────────────────────────────────────────────────────
 $('dlCaptchaSubmitBtn').addEventListener('click', handleDlCaptchaSubmit);
 $('dlCaptchaInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleDlCaptchaSubmit(); });
+$('dlCaptchaCancelBtn').addEventListener('click', () => {
+  hideDlCaptcha();
+  if (state.dlCaptchaReject) { state.dlCaptchaReject(new Error('Cancelled by user')); state.dlCaptchaReject = null; }
+});
 
 $('dlCaptchaRefreshBtn').addEventListener('click', async () => {
   $('dlCaptchaRefreshBtn').disabled = true;
