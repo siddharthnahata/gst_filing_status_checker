@@ -248,7 +248,7 @@ function matchesPeriod(taxp, targetMonth) {
     }
   }
 
-  return tp.includes(tm);
+  return false;
 }
 
 function findMatchingEntry(filingStatus, targetMonth, returnType) {
@@ -277,7 +277,7 @@ function findMatchingEntry(filingStatus, targetMonth, returnType) {
 // ── Session expiry detection ──────────────────────────────────────────────────
 function isSessionExpiredResponse(result) {
   if (result.httpStatus === 401 && isApiKeyError(result)) return false;
-  if (result.httpStatus === 401 || result.httpStatus === 403) return true;
+  if (result.httpStatus === 401) return true;
   if (!result.ok && !result.data) return false;
   const str = JSON.stringify(result.data || result.error || '').toLowerCase();
   return str.includes('invalid session') || str.includes('session expired') ||
@@ -522,7 +522,8 @@ async function runBatch() {
     groups = [{ username: defaultUsername, password: defaultPassword, rows }];
   }
 
-  addLog(`─── Batch start: ${total} GSTINs | ${month} ${year} | FY ${financialYear} | ${returnType}${groups.length > 1 ? ` | ${groups.length} credential groups` : ''} ───`, 'step');
+  const periodLabel = isAnnual ? `FY ${financialYear}-${String(parseInt(financialYear)+1).slice(2)}` : `${month} ${year} | FY ${financialYear}`;
+  addLog(`─── Batch start: ${total} GSTINs | ${periodLabel} | ${returnType}${groups.length > 1 ? ` | ${groups.length} credential groups` : ''} ───`, 'step');
 
   let filed = 0, notFiled = 0, errored = 0, invalid = 0, seq = 0;
   const results = [];
@@ -699,8 +700,10 @@ $('runBtn').addEventListener('click', async () => {
   if (!state.endpoint) { alert('Local API not ready. Please wait a moment and try again.'); return; }
   if (!state.inputRows.length) { alert('Select an input file with GSTINs first.'); return; }
   const hasPerRowCreds = state.inputRows.some(r => r.username && r.password);
-  if (!val('username') && !hasPerRowCreds) { alert('Enter the GST Portal username (or include a Username column in the input file).'); return; }
-  if (!$('password').value && !hasPerRowCreds) { alert('Enter the portal password (or include a Password column in the input file).'); return; }
+  if ((!val('username') || !$('password').value) && !hasPerRowCreds) {
+    alert('Enter your GST username and password, or load a file with per-row credentials.');
+    return;
+  }
 
   state.isRunning = true;
   state.results   = [];
@@ -1417,7 +1420,11 @@ async function onAccountSelect(selId, usernameId, passwordId, gstinId, emailId) 
   if (gstinId && $(gstinId)) $(gstinId).value = acc.gstin || '';
   if (emailId  && $(emailId))  $(emailId).value  = acc.email  || '';
   const res = await window.gstApp.getAccountPassword({ id });
-  if (res.ok) $(passwordId).value = res.password;
+  if (res.ok) {
+    $(passwordId).value = res.password;
+  } else {
+    addDlLog('⚠ Could not decrypt password for this account — enter it manually.', 'warn');
+  }
 }
 
 async function saveAccount(logFn, usernameId, passwordId, gstinId, emailId) {

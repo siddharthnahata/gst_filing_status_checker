@@ -1,53 +1,38 @@
 const path = require('path');
-const fs = require('fs');
+const fs   = require('fs');
 
-const DB_PATH = process.env.CAPTCHA_DB
-  || path.join(__dirname, '..', '..', 'data', 'captchas.db');
+const STORE_PATH = process.env.CAPTCHA_DB
+  ? process.env.CAPTCHA_DB.replace(/\.db$/, '.jsonl')
+  : path.join(__dirname, '..', '..', 'data', 'captchas.jsonl');
 
-let db = null;
-let insertStmt = null;
-let disabled = false;
+// Expose DB_PATH alias so existing callers referencing DB_PATH still work
+const DB_PATH = STORE_PATH;
 
-function init() {
-  if (db || disabled) return db;
+let ready = false;
+
+function ensureDir() {
+  if (ready) return;
   try {
-    // Lazy require — captcha logging is optional; app runs fine without it.
-    const Database = require('better-sqlite3');
-    fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS solved_captchas (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-        username      TEXT,
-        gstin         TEXT,
-        captcha_text  TEXT NOT NULL,
-        captcha_base64 TEXT NOT NULL
-      );
-    `);
-    insertStmt = db.prepare(`
-      INSERT INTO solved_captchas (username, gstin, captcha_text, captcha_base64)
-      VALUES (@username, @gstin, @captchaText, @captchaBase64)
-    `);
+    fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
+    ready = true;
   } catch (err) {
-    disabled = true;
-    console.warn('[captcha-store] disabled:', err.message);
+    console.warn('[captcha-store] could not create data dir:', err.message);
   }
-  return db;
 }
 
 function saveSolvedCaptcha({ username, gstin, captchaText, captchaBase64 }) {
   if (!captchaText || !captchaBase64) return;
   try {
-    init();
-    if (disabled || !insertStmt) return;
-    insertStmt.run({
+    ensureDir();
+    if (!ready) return;
+    const entry = JSON.stringify({
+      ts: new Date().toISOString(),
       username: username || null,
-      gstin: gstin || null,
+      gstin:    gstin    || null,
       captchaText,
       captchaBase64,
     });
+    fs.appendFileSync(STORE_PATH, entry + '\n', 'utf8');
   } catch (err) {
     console.warn('[captcha-store] save failed:', err.message);
   }
@@ -55,9 +40,9 @@ function saveSolvedCaptcha({ username, gstin, captchaText, captchaBase64 }) {
 
 function count() {
   try {
-    init();
-    if (disabled || !db) return 0;
-    return db.prepare('SELECT COUNT(*) AS n FROM solved_captchas').get().n;
+    if (!fs.existsSync(STORE_PATH)) return 0;
+    const content = fs.readFileSync(STORE_PATH, 'utf8');
+    return content.split('\n').filter(l => l.trim()).length;
   } catch {
     return 0;
   }
