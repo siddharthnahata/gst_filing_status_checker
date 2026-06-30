@@ -137,6 +137,11 @@ function setProgress(done, total, label) {
 // ── Financial year helpers ────────────────────────────────────────────────────
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
+// Return type classification
+const ANNUAL_RETURN_TYPES    = new Set(['GSTR9', 'GSTR9C', 'GSTR4']);
+const QUARTERLY_RETURN_TYPES = new Set(['GSTR1Q']);
+const QUARTER_END_MONTHS     = new Set(['June', 'September', 'December', 'March']);
+
 function getFinancialYear(month, year) {
   const idx = MONTHS.indexOf(month) + 1;
   return idx >= 4 ? String(year) : String(year - 1);
@@ -154,11 +159,47 @@ function getReturnPeriod(month, year) {
 }
 
 function updateFYDisplay() {
+  const rt   = $('returnType').value;
   const month = $('month').value;
   const year  = parseInt($('year').value);
   if (!year) return;
-  const fyStart = getFinancialYear(month, year);
-  $('fyDisplay').textContent = `→ Financial Year: ${fyStart}-${String(parseInt(fyStart) + 1).slice(2)}`;
+  if (ANNUAL_RETURN_TYPES.has(rt)) {
+    $('fyDisplay').textContent = `→ Annual Return · FY ${year}-${String(year + 1).slice(2)}`;
+  } else {
+    const fyStart = getFinancialYear(month, year);
+    $('fyDisplay').textContent = `→ FY ${fyStart}-${String(parseInt(fyStart) + 1).slice(2)}`;
+  }
+}
+
+// Lock / filter the month dropdown based on return type
+function syncMonthToReturnType() {
+  const rt      = $('returnType').value;
+  const monthEl = $('month');
+  const opts    = [...monthEl.options];
+
+  if (ANNUAL_RETURN_TYPES.has(rt)) {
+    // Annual: month irrelevant — fade and disable
+    monthEl.disabled = true;
+    monthEl.style.opacity = '0.35';
+    opts.forEach(o => { o.disabled = false; o.style.display = ''; });
+  } else if (QUARTERLY_RETURN_TYPES.has(rt)) {
+    // Quarterly: only quarter-end months allowed
+    monthEl.disabled = false;
+    monthEl.style.opacity = '';
+    opts.forEach(o => {
+      const allowed = QUARTER_END_MONTHS.has(o.value);
+      o.disabled    = !allowed;
+      o.style.display = allowed ? '' : 'none';
+    });
+    // If current selection is not a quarter-end month, jump to June
+    if (!QUARTER_END_MONTHS.has(monthEl.value)) monthEl.value = 'June';
+  } else {
+    // Monthly: all months available
+    monthEl.disabled = false;
+    monthEl.style.opacity = '';
+    opts.forEach(o => { o.disabled = false; o.style.display = ''; });
+  }
+  updateFYDisplay();
 }
 
 function updateDlFYDisplay() {
@@ -212,10 +253,24 @@ function matchesPeriod(taxp, targetMonth) {
 
 function findMatchingEntry(filingStatus, targetMonth, returnType) {
   if (!Array.isArray(filingStatus)) return null;
-  // GSTR1 filers with quarterly frequency file as GSTR1FF — match both
-  const types = returnType === 'GSTR1' ? ['GSTR1', 'GSTR1FF'] : [returnType];
-  return filingStatus.flat(Infinity).find(e =>
-    e && types.includes(e.rtntype) && matchesPeriod(e.taxp, targetMonth) && e.status === 'Filed'
+  const flat = filingStatus.flat(Infinity).filter(Boolean);
+
+  // Annual returns use taxp: "Annual" — month is irrelevant
+  if (ANNUAL_RETURN_TYPES.has(returnType)) {
+    return flat.find(e =>
+      e.rtntype === returnType &&
+      (e.taxp || '').toLowerCase() === 'annual' &&
+      e.status === 'Filed'
+    ) || null;
+  }
+
+  // GSTR1 (monthly filers) + GSTR1FF (quarterly QRMP filers) — GSTR1 option covers both
+  // GSTR1Q (quarterly-specific) — match only GSTR1FF
+  const types = returnType === 'GSTR1'  ? ['GSTR1', 'GSTR1FF']
+              : returnType === 'GSTR1Q' ? ['GSTR1FF']
+              : [returnType];
+  return flat.find(e =>
+    types.includes(e.rtntype) && matchesPeriod(e.taxp, targetMonth) && e.status === 'Filed'
   ) || null;
 }
 
@@ -439,7 +494,9 @@ async function runBatch() {
   const month         = $('month').value;
   const year          = parseInt($('year').value);
   const returnType    = $('returnType').value;
-  const financialYear = getFinancialYear(month, year);
+  const isAnnual      = ANNUAL_RETURN_TYPES.has(returnType);
+  const financialYear = isAnnual ? String(year) : getFinancialYear(month, year);
+  const targetMonth   = isAnnual ? 'Annual' : month;
 
   const defaultUsername = val('username');
   const defaultPassword = $('password').value;
@@ -506,7 +563,7 @@ async function runBatch() {
 
       let result;
       try {
-        result = await processSingleGSTIN(gstin, name, email, financialYear, month, returnType);
+        result = await processSingleGSTIN(gstin, name, email, financialYear, targetMonth, returnType);
       } catch (e) {
         if (e.name === 'ApiKeyError') throw e;
         result = { gstin, name, email, status: 'Error', dof: '', arn: '', note: e.message };
@@ -1287,6 +1344,7 @@ $('smtpPort').addEventListener('change', () => {
 
 $('month').addEventListener('change', updateFYDisplay);
 $('year').addEventListener('change', updateFYDisplay);
+$('returnType').addEventListener('change', syncMonthToReturnType);
 $('dlMonth').addEventListener('change', updateDlFYDisplay);
 $('dlYear').addEventListener('change', updateDlFYDisplay);
 
@@ -1468,6 +1526,7 @@ async function initLocalApi() {
   await loadSavedConfig();
   await loadAccounts();
   await initLocalApi();
+  syncMonthToReturnType();
   updateFYDisplay();
   updateDlFYDisplay();
   updateDlSessionStatus();
