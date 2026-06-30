@@ -821,18 +821,18 @@ tr:last-child td { border-bottom: none; }
   color: var(--red);
 }
 
-.captcha-cancel-btn {
-  margin-top: 10px;
-  width: 100%;
-  padding: 5px 0;
-  font-size: 11px;
-  color: var(--t2);
+.captcha-close-btn {
+  margin-left: auto;
   background: none;
-  border: 1px solid var(--b1);
-  border-radius: var(--r);
+  border: none;
+  color: var(--t3);
+  font-size: 15px;
+  line-height: 1;
   cursor: pointer;
+  padding: 0 2px;
+  transition: color 0.12s;
 }
-.captcha-cancel-btn:hover { color: var(--t1); border-color: var(--b2); background: var(--s2); }
+.captcha-close-btn:hover { color: var(--red); }
 
 /* ── Download Panel specifics ───────────────────────────── */
 .dl-session-status {

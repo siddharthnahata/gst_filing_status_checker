@@ -60,6 +60,7 @@
           <div class="accounts-bulk-row" style="margin-bottom:8px;">
             <button class="btn-xs btn-secondary" id="importCredsBtn">↑ Import</button>
             <button class="btn-xs btn-secondary" id="exportCredsBtn">↓ Export</button>
+            <button class="btn-xs btn-danger" id="clearAllAccountsBtn">✕ Clear All</button>
           </div>
           <div class="field-row field-row-2">
             <div class="field">
@@ -404,7 +405,10 @@
 
 <div class="captcha-modal hidden" id="captchaSection">
   <div class="captcha-box">
-    <div class="captcha-box-title">🔐 Captcha Required</div>
+    <div class="captcha-box-title">
+      <span>🔐 Captcha Required</span>
+      <button class="captcha-close-btn" id="captchaCancelBtn" title="Cancel">✕</button>
+    </div>
     <div class="captcha-img-wrap">
       <img id="captchaImg" src="" alt="CAPTCHA">
     </div>
@@ -414,13 +418,15 @@
       <button class="btn-secondary" id="captchaRefreshBtn" title="Refresh captcha">↺</button>
     </div>
     <div id="captchaError" class="captcha-error hidden"></div>
-    <button class="captcha-cancel-btn" id="captchaCancelBtn">Cancel</button>
   </div>
 </div>
 
 <div class="captcha-modal hidden" id="dlCaptchaSection">
   <div class="captcha-box">
-    <div class="captcha-box-title">🔐 Captcha Required</div>
+    <div class="captcha-box-title">
+      <span>🔐 Captcha Required</span>
+      <button class="captcha-close-btn" id="dlCaptchaCancelBtn" title="Cancel">✕</button>
+    </div>
     <div class="captcha-img-wrap">
       <img id="dlCaptchaImg" src="" alt="CAPTCHA">
     </div>
@@ -430,7 +436,6 @@
       <button class="btn-secondary" id="dlCaptchaRefreshBtn" title="Refresh captcha">↺</button>
     </div>
     <div id="dlCaptchaError" class="captcha-error hidden"></div>
-    <button class="captcha-cancel-btn" id="dlCaptchaCancelBtn">Cancel</button>
   </div>
 </div>
 

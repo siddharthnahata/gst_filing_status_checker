@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('gstApp', {
   listAccounts:       ()     => ipcRenderer.invoke('list-accounts'),
   saveAccount:        (args) => ipcRenderer.invoke('save-account', args),
   deleteAccount:      (args) => ipcRenderer.invoke('delete-account', args),
+  clearAllAccounts:   ()     => ipcRenderer.invoke('clear-all-accounts'),
   getAccountPassword: (args) => ipcRenderer.invoke('get-account-password', args),
   exportAllAccounts:  ()     => ipcRenderer.invoke('export-all-accounts'),
   healthCheck:       (args) => ipcRenderer.invoke('api-health', args),

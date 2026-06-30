@@ -1500,6 +1500,22 @@ async function exportCredentials() {
 
 $('importCredsBtn').addEventListener('click', importCredentials);
 $('exportCredsBtn').addEventListener('click', exportCredentials);
+$('clearAllAccountsBtn').addEventListener('click', async () => {
+  const confirmed = confirm(
+    '⚠ DELETE ALL SAVED ACCOUNTS\n\n' +
+    'This will permanently delete every saved account including all stored usernames, passwords, GSTINs and emails.\n\n' +
+    'This action cannot be undone. The accounts cannot be recovered.\n\n' +
+    'Type OK to confirm.'
+  );
+  if (!confirmed) return;
+  const res = await window.gstApp.clearAllAccounts();
+  if (res.ok) {
+    await loadAccounts();
+    addLog('All saved accounts deleted.', 'warn');
+  } else {
+    addLog(`Failed to clear accounts: ${res.error}`, 'error');
+  }
+});
 
 $('savedAccounts').addEventListener('change', () => onAccountSelect('savedAccounts', 'username', 'password', 'accountGstin', 'accountEmail'));
 $('saveAccountBtn').addEventListener('click', () => saveAccount(addLog, 'username', 'password', 'accountGstin', 'accountEmail'));

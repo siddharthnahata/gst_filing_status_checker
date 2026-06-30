@@ -360,6 +360,15 @@ ipcMain.handle('delete-account', (_event, { id }) => {
   }
 });
 
+ipcMain.handle('clear-all-accounts', () => {
+  try {
+    writeAccounts([]);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 ipcMain.handle('get-account-password', (_event, { id }) => {
   try {
     const account = readAccounts().find(a => a.id === id);
