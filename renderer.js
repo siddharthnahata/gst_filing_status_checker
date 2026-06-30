@@ -1577,7 +1577,10 @@ async function initLocalApi() {
   addDlLog('For PDF downloads, enter client credentials and click Login & Download PDF.', 'info');
 
   const appVersion = await window.gstApp.getAppVersion();
-  if (appVersion) $('appVersionLabel').textContent = `v${appVersion}`;
+  if (appVersion) {
+    $('headerVersionBadge').textContent = `v${appVersion}`;
+    $('appVersionLabel').textContent    = `v${appVersion}`;
+  }
 
   function compareSemver(a, b) {
     const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
