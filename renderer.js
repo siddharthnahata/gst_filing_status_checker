@@ -1316,23 +1316,18 @@ $('loadFromDbBtn').addEventListener('click', async () => {
     return;
   }
 
-  // Decrypt passwords for each account
-  const rows = [];
-  for (const acc of withGstin) {
-    const res = await window.gstApp.getAccountPassword({ id: acc.id });
-    rows.push({
-      gstin:    acc.gstin.trim().toUpperCase(),
-      username: acc.username,
-      password: res.ok ? res.password : '',
-      email:    acc.email || '',
-      name:     acc.label || acc.username,
-    });
-  }
+  // Filing status is a public API — one login is enough for all GSTINs.
+  // Don't set per-row credentials; the form's single login handles everything.
+  const rows = withGstin.map(acc => ({
+    gstin: acc.gstin.trim().toUpperCase(),
+    email: acc.email || '',
+    name:  acc.label || acc.username,
+  }));
 
   state.inputRows      = rows;
   $('filePath').value  = '— Saved Accounts Database —';
-  fileInfo.textContent = `✓ ${rows.length} GSTINs loaded from database · Credentials ✓${skipped ? ` (${skipped} skipped — no GSTIN)` : ''}`;
-  addLog(`DB loaded: ${rows.length} accounts${skipped ? `, ${skipped} skipped (no GSTIN)` : ''} — per-row credentials`, 'ok');
+  fileInfo.textContent = `✓ ${rows.length} GSTINs loaded from database${skipped ? ` (${skipped} skipped — no GSTIN)` : ''}`;
+  addLog(`DB loaded: ${rows.length} GSTINs from saved accounts${skipped ? `, ${skipped} skipped (no GSTIN)` : ''}`, 'ok');
 });
 
 $('smtpSecure').addEventListener('change', () => { $('smtpPort').value = $('smtpSecure').value; });
