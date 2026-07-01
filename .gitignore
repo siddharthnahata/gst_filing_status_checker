@@ -7,3 +7,4 @@ default-config.json
 chromium/
 api/node_modules/
 secrets.json
+api/data/

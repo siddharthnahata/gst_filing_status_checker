@@ -1,11 +1,29 @@
 const sessionManager = require('./session-manager');
 const captchaStore = require('./captcha-store');
+const rateLimiter = require('./rate-limiter');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const GST_LOGIN_URL = 'https://services.gst.gov.in/services/login';
 const DOWNLOAD_TIMEOUT_MS = Number.parseInt(process.env.GST_DOWNLOAD_TIMEOUT_MS || '', 10)
   || (process.platform === 'linux' ? 60000 : 30000);
+
+// Filed returns are immutable once downloaded — cache the PDF by GSTIN +
+// return type + period so re-requesting the same one skips Puppeteer
+// entirely. Lives in Electron's userData (passed down via PDF_CACHE_DIR) so
+// it survives app updates, unlike the bundled resourcesPath the API code
+// itself runs from; falls back to a tmpdir when run standalone.
+const PDF_CACHE_DIR = process.env.PDF_CACHE_DIR || path.join(os.tmpdir(), 'gst-pdf-cache');
+
+// Category tabs on a litserv case-folder page (client-side tabs, same URL).
+// Only one renders its documents by default, so a target document may live
+// under a tab we haven't opened yet — cycle through these when not found.
+const CASE_FOLDER_TABS = [
+  'NOTICES', 'REPLIES', 'ORDERS', 'APPLICATIONS', 'RECTIFICATION',
+  'ADDITIONAL DOCUMENT', 'WITHDRAWAL APPLICATION', 'REMAND DETAILS',
+  'UPLOAD OFFLINE APL-04 ORDERS',
+];
 class GSTPortal {
 
   // ─── LOGIN FLOW ───────────────────────────────────────────────
@@ -207,6 +225,62 @@ class GSTPortal {
     return activePage;
   }
 
+  // ─── PDF CACHE (filed returns are immutable once downloaded) ─────
+
+  _pdfCacheKey(returnTypeTag, gstin, period) {
+    return `${returnTypeTag}_${gstin}_${period}.pdf`;
+  }
+
+  _readCachedPdf(cacheKey) {
+    try {
+      const filePath = path.join(PDF_CACHE_DIR, cacheKey);
+      if (!fs.existsSync(filePath)) return null;
+      const buffer = fs.readFileSync(filePath);
+      // Guard against a corrupted/partial cache write (rare, but silently
+      // serving a broken file would be worse than just re-downloading).
+      if (buffer.length < 5 || buffer.toString('utf8', 0, 5) !== '%PDF-') {
+        try { fs.unlinkSync(filePath); } catch (_) {}
+        return null;
+      }
+      return { filename: cacheKey, size: buffer.length, mimeType: 'application/pdf', base64: buffer.toString('base64'), cached: true };
+    } catch (_) {
+      return null; // best-effort — a bad cache entry just falls through to a fresh download
+    }
+  }
+
+  _writeCachedPdf(cacheKey, buffer) {
+    try {
+      fs.mkdirSync(PDF_CACHE_DIR, { recursive: true });
+      fs.writeFileSync(path.join(PDF_CACHE_DIR, cacheKey), buffer);
+    } catch (_) { /* best-effort — cache write failure must not fail the download */ }
+  }
+
+  // Generic byte cache for notice/case documents — unlike returns these
+  // aren't guaranteed to be PDFs (case docs can be pdf/zip/jpg/png), so no
+  // magic-byte format check, just a non-empty-file sanity guard.
+  _sanitizeCacheSegment(s) {
+    return String(s || '').replace(/[^A-Za-z0-9.\-]+/g, '_');
+  }
+
+  _readCacheBuffer(cacheKey) {
+    try {
+      const filePath = path.join(PDF_CACHE_DIR, cacheKey);
+      if (!fs.existsSync(filePath)) return null;
+      const buffer = fs.readFileSync(filePath);
+      if (!buffer.length) { try { fs.unlinkSync(filePath); } catch (_) {} return null; }
+      return buffer;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _writeCacheBuffer(cacheKey, buffer) {
+    try {
+      fs.mkdirSync(PDF_CACHE_DIR, { recursive: true });
+      fs.writeFileSync(path.join(PDF_CACHE_DIR, cacheKey), buffer);
+    } catch (_) { /* best-effort */ }
+  }
+
   /**
    * GSTR-1: Download filed PDF.
    * Uses "View Filed Returns" flow: Services → Returns → View Filed Returns → fill form.
@@ -222,6 +296,13 @@ class GSTPortal {
     });
     const requestedPeriod = this._periodKeyFromSelection(selection);
     const downloadDir = session.downloadDir;
+
+    const gstin = session.userInfo?.gstin;
+    const cacheKey = (gstin && requestedPeriod) ? this._pdfCacheKey('GSTR1', gstin, requestedPeriod) : null;
+    if (cacheKey && !options.forceRefresh) {
+      const cached = this._readCachedPdf(cacheKey);
+      if (cached) return cached;
+    }
 
     // clear existing files
     const existing = fs.readdirSync(downloadDir);
@@ -255,6 +336,7 @@ class GSTPortal {
     if (pageState.hasDownloadFiled) {
       const clicked = await this._clickGstr1PdfButton(activePage, { allowGenericDownload: false });
       if (!clicked) {
+        await this._dumpDiag(session, activePage, 'gstr1-no-direct-pdf-button');
         return { error: 'Could not find direct GSTR-1 PDF button on the filed return page', pageButtons: pageState.controls };
       }
     }
@@ -263,6 +345,7 @@ class GSTPortal {
       // click View Summary — strictly match only this text
       const clickedSummary = await this._clickViewSummaryButton(activePage);
       if (!clickedSummary) {
+        await this._dumpDiag(session, activePage, 'gstr1-no-view-summary-button');
         return { error: 'Could not find VIEW SUMMARY button on GSTR-1 page', pageButtons: pageState.controls };
       }
       await this._waitForPageSwitchOrUrlChange(session, activePage, activePage.url(), {
@@ -289,9 +372,11 @@ class GSTPortal {
     else if (pageState.hasDownload) {
       const clicked = await this._clickGstr1PdfButton(activePage, { allowGenericDownload: true });
       if (!clicked) {
+        await this._dumpDiag(session, activePage, 'gstr1-no-generic-download-button');
         return { error: 'Could not find a download button on the GSTR-1 page', pageButtons: pageState.controls };
       }
     } else {
+      await this._dumpDiag(session, activePage, 'gstr1-no-download-option');
       return { error: 'No download option found on page', pageButtons: pageState.controls };
     }
 
@@ -322,6 +407,10 @@ class GSTPortal {
 
     const buffer = fs.readFileSync(filePath);
     fs.rmSync(filePath, { force: true });
+    // Only cache when the portal-served period is positively confirmed to
+    // match what was requested — if the filename didn't carry a parseable
+    // period, we can't prove this result is correct, so don't persist it.
+    if (cacheKey && servedPeriod === requestedPeriod) this._writeCachedPdf(cacheKey, buffer);
 
     return {
       filename: file,
@@ -345,6 +434,13 @@ class GSTPortal {
     });
     const requestedPeriod = this._periodKeyFromSelection(selection);
     const downloadDir = session.downloadDir;
+
+    const gstin = session.userInfo?.gstin;
+    const cacheKey = (gstin && requestedPeriod) ? this._pdfCacheKey('GSTR3B', gstin, requestedPeriod) : null;
+    if (cacheKey && !options.forceRefresh) {
+      const cached = this._readCachedPdf(cacheKey);
+      if (cached) return cached;
+    }
 
     const existing = fs.readdirSync(downloadDir);
     for (const f of existing) fs.unlinkSync(path.join(downloadDir, f));
@@ -382,6 +478,7 @@ class GSTPortal {
       }
 
       if (!clickResult) {
+        await this._dumpDiag(session, activePage, 'gstr3b-no-download-button');
         return {
           error: 'Could not find GSTR-3B PDF button on the filed return page',
           pageButtons: refreshedState.controls,
@@ -412,6 +509,9 @@ class GSTPortal {
 
     const buffer = fs.readFileSync(filePath);
     fs.rmSync(filePath, { force: true });
+    // Only cache when the portal-served period is positively confirmed to
+    // match what was requested — see the same guard in downloadGstr1Pdf.
+    if (cacheKey && servedPeriod === requestedPeriod) this._writeCachedPdf(cacheKey, buffer);
 
     return {
       filename: file,
@@ -419,101 +519,6 @@ class GSTPortal {
       mimeType: 'application/pdf',
       base64: buffer.toString('base64'),
       downloadSource: clickResult.source,
-    };
-  }
-
-  /**
-   * View any filed return via: Services → Returns → View Filed Returns → fill form.
-   * Captures all API calls and scrapes page data.
-   */
-  async viewReturn(sessionId, { financialYear, returnPeriod, filingPeriod, month, returnType }) {
-    const session = sessionManager.getSession(sessionId);
-    if (!session?.loggedIn) throw new Error('Not logged in');
-
-    // start capturing APIs
-    const capturedApis = [];
-    const captureHandler = async (response) => {
-      const url = response.url();
-      try {
-        const ct = response.headers()['content-type'] || '';
-        if (ct.includes('json') || url.includes('/api/')) {
-          const text = await response.text().catch(() => null);
-          if (text) {
-            let data;
-            try { data = JSON.parse(text); } catch { data = text; }
-            capturedApis.push({ url, method: response.request().method(), status: response.status(), data, timestamp: Date.now() });
-          }
-        }
-      } catch (_) {}
-    };
-    session.page.on('response', captureHandler);
-
-    // navigate via Services → Returns → View Filed Returns
-    let activePage = await this._navigateToViewFiledReturns(session, {
-      financialYear,
-      returnPeriod,
-      filingPeriod,
-      month,
-      returnType,
-    });
-
-    // also listen on new page if tab changed
-    if (activePage !== session.page) {
-      activePage.on('response', captureHandler);
-    }
-
-    // check for View Summary button (non-nil returns have this)
-    const hasViewSummary = await activePage.evaluate(() => {
-      return Array.from(document.querySelectorAll('button, a')).some(
-        b => b.textContent.trim().toUpperCase().includes('VIEW SUMMARY')
-      );
-    });
-
-    if (hasViewSummary) {
-      await this._clickViewSummaryButton(activePage);
-      await this._waitForPageSwitchOrUrlChange(session, activePage, activePage.url(), {
-        targetUrlPart: '/returns/auth/gstr1',
-        timeout: 8000,
-      });
-      await this._settlePortalPage(activePage, { timeout: 1200, fallbackMs: 80 });
-
-      // check for new tab
-      const latestPage = await this._getLatestActivePage(session, activePage);
-      if (latestPage !== activePage) {
-        activePage = latestPage;
-        latestPage.on('response', captureHandler);
-        await this._settlePortalPage(latestPage, { timeout: 1200, fallbackMs: 80 });
-      }
-    }
-
-    if (this._normalizeReturnTypeKey(returnType) === 'GSTR3B') {
-      await this._dismissGstr3bSummaryPopup(activePage);
-      await this._settlePortalPage(activePage, { timeout: 1500, fallbackMs: 100 });
-    }
-
-    // scrape page content
-    const pageData = await activePage.evaluate(() => {
-      const tables = Array.from(document.querySelectorAll('table')).map((t, i) => ({
-        headers: Array.from(t.querySelectorAll('th')).map(th => th.textContent.trim()),
-        rows: Array.from(t.querySelectorAll('tbody tr')).map(r =>
-          Array.from(r.querySelectorAll('td')).map(td => td.textContent.trim())
-        ),
-      }));
-      const title = document.title;
-      const url = window.location.href;
-      const bodyText = document.body.innerText.substring(0, 5000);
-      return { title, url, tables, bodyText };
-    });
-
-    session.page.off('response', captureHandler);
-    if (activePage !== session.page) activePage.off('response', captureHandler);
-
-    return {
-      returnType,
-      financialYear,
-      returnPeriod,
-      pageData,
-      capturedApis,
     };
   }
 
@@ -567,7 +572,10 @@ class GSTPortal {
     if (!fy && fy !== 0) throw new Error('fy is required (e.g. "2023-24")');
     const year = this._toFyStartYear(fy);
     if (!year) throw new Error(`Could not parse a financial year from "${fy}" (expected e.g. "2023-24")`);
-    return this.callPortalApi(
+    // High-volume batch path (Tab 1 scans hundreds of GSTINs) — bypasses the
+    // shared rate limiter's per-call gap; pacing for this path is handled by
+    // the client's own periodic pause instead (see renderer.js runBatch).
+    return this._callPortalApi(
       sessionId,
       'https://services.gst.gov.in/services/api/search/taxpayerReturnDetails',
       'POST',
@@ -629,12 +637,13 @@ class GSTPortal {
   /**
    * Best-effort diagnostics dump for download failures. Writes a screenshot +
    * JSON (page url, all tab urls, visible control texts) to <tmp>/gst-diag so
-   * we can see where a headless flow got stuck. Never throws.
+   * we can see where a headless flow got stuck. Opt-in via GST_DEBUG=1 (no-op
+   * in production otherwise). Never throws; returns the base file path (no
+   * extension) or null.
    */
   async _dumpDiag(session, page, label) {
-    if (!process.env.GST_DEBUG) return; // opt-in; no-op in production
+    if (!process.env.GST_DEBUG) return null; // opt-in; no-op in production
     try {
-      const os = require('os');
       const dir = path.join(os.tmpdir(), 'gst-diag');
       fs.mkdirSync(dir, { recursive: true });
       const base = path.join(dir, `${label}-${Date.now()}`);
@@ -646,14 +655,17 @@ class GSTPortal {
       } catch (_) {}
       try {
         info.controls = await page.evaluate(() =>
-          Array.from(document.querySelectorAll('button,a,input[type=button],input[type=submit]'))
+          Array.from(document.querySelectorAll('button,a,input[type=button],input[type=submit],[role="tab"]'))
             .filter((el) => el.offsetWidth || el.offsetHeight || el.getClientRects().length)
             .map((el) => (el.textContent || el.value || '').trim().replace(/\s+/g, ' ').slice(0, 60))
-            .filter(Boolean).slice(0, 60));
+            .filter(Boolean).slice(0, 80));
       } catch (_) {}
       try { await page.screenshot({ path: `${base}.png`, fullPage: true }); } catch (_) {}
       fs.writeFileSync(`${base}.json`, JSON.stringify(info, null, 2));
-    } catch (_) { /* best-effort */ }
+      return base;
+    } catch (_) {
+      return null; // best-effort
+    }
   }
 
   /**
@@ -663,6 +675,10 @@ class GSTPortal {
    * and pop-up tabs, so this single-tab approach is the only reliable path).
    */
   async callPortalApi(sessionId, urlOrPath, method = 'GET', body = null) {
+    return rateLimiter.schedule(() => this._callPortalApi(sessionId, urlOrPath, method, body));
+  }
+
+  async _callPortalApi(sessionId, urlOrPath, method = 'GET', body = null) {
     const session = sessionManager.getSession(sessionId);
     if (!session?.loggedIn) throw new Error('Not logged in');
 
@@ -711,150 +727,6 @@ class GSTPortal {
         return { error: e.message };
       }
     }, urlOrPath, method, body);
-  }
-
-  // ─── DOWNLOAD ─────────────────────────────────────────────────
-
-  /**
-   * Download a return file (Excel/JSON/PDF).
-   * Uses "View Filed Returns" flow, then finds and clicks DOWNLOAD.
-   */
-  async downloadReturn(sessionId, { financialYear, returnPeriod, filingPeriod, month, returnType }) {
-    if (this._normalizeReturnTypeKey(returnType) === 'GSTR3B') {
-      return this.downloadGstr3bPdf(sessionId, {
-        financialYear,
-        returnPeriod,
-        filingPeriod,
-        month,
-        returnType,
-      });
-    }
-
-    const session = sessionManager.getSession(sessionId);
-    if (!session?.loggedIn) throw new Error('Not logged in');
-
-    const downloadDir = session.downloadDir;
-
-    // clear any existing files in download dir
-    const existingFiles = fs.readdirSync(downloadDir);
-    for (const f of existingFiles) {
-      fs.unlinkSync(path.join(downloadDir, f));
-    }
-
-    // navigate via Services → Returns → View Filed Returns
-    const activePage = await this._navigateToViewFiledReturns(session, {
-      financialYear,
-      returnPeriod,
-      filingPeriod,
-      month,
-      returnType,
-    });
-
-    // setup download behavior
-    await sessionManager.setupDownloadForPage(sessionId, activePage);
-
-    // check page state — might need View Summary first for non-nil returns
-    const pageState = await activePage.evaluate(() => {
-      const allEls = Array.from(document.querySelectorAll('button, a'));
-      const texts = allEls.map(b => b.textContent.trim().toUpperCase());
-      return {
-        hasViewSummary: texts.some(t => t.includes('VIEW SUMMARY')),
-        hasDownload: texts.some(t => t.includes('DOWNLOAD')),
-        notFiled: document.body.innerText.toUpperCase().includes('NOT FILED') || document.body.innerText.toUpperCase().includes('NO RECORD FOUND'),
-        texts: texts.slice(0, 30),
-      };
-    });
-
-    if (pageState.notFiled) {
-      return { error: 'Return not filed for this period', status: 'NOT_FILED' };
-    }
-
-    // If View Summary exists, click it first (non-nil return)
-    if (pageState.hasViewSummary && !pageState.hasDownload) {
-      await activePage.evaluate(() => {
-        const btn = Array.from(document.querySelectorAll('button, a')).find(
-          b => b.textContent.trim().toUpperCase().includes('VIEW SUMMARY')
-        );
-        if (btn) btn.click();
-      });
-      await this._waitForPageSwitchOrUrlChange(session, activePage, activePage.url(), {
-        targetUrlPart: '/returns/auth/',
-        timeout: 8000,
-      });
-      await this._settlePortalPage(activePage, { timeout: 1200, fallbackMs: 80 });
-    }
-
-    // click DOWNLOAD button
-    const dlClicked = await activePage.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll('button, a')).find(
-        b => b.textContent.toUpperCase().includes('DOWNLOAD')
-      );
-      if (btn) { btn.click(); return true; }
-      return false;
-    });
-
-    if (!dlClicked) {
-      return { error: `Could not find DOWNLOAD button for ${returnType}`, pageButtons: pageState.texts };
-    }
-
-    // wait for download to complete
-    const file = await this._waitForDownload(downloadDir, DOWNLOAD_TIMEOUT_MS);
-    if (!file) {
-      return { error: 'Download timed out — no file appeared' };
-    }
-
-    const filePath = path.join(downloadDir, file);
-    const fileBuffer = fs.readFileSync(filePath);
-    const base64 = fileBuffer.toString('base64');
-    const ext = path.extname(file).toLowerCase();
-
-    return {
-      returnType,
-      financialYear,
-      returnPeriod,
-      filename: file,
-      mimeType: ext === '.xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        : ext === '.pdf' ? 'application/pdf'
-        : ext === '.json' ? 'application/json'
-        : ext === '.csv' ? 'text/csv'
-        : 'application/octet-stream',
-      size: fileBuffer.length,
-      base64,
-    };
-  }
-
-  /**
-   * List all downloaded files for a session.
-   */
-  listDownloads(sessionId) {
-    const session = sessionManager.getSession(sessionId);
-    if (!session) throw new Error('Invalid session');
-    const files = fs.readdirSync(session.downloadDir);
-    return files.map(f => {
-      const stat = fs.statSync(path.join(session.downloadDir, f));
-      return { filename: f, size: stat.size, modified: stat.mtime };
-    });
-  }
-
-  /**
-   * Get a specific downloaded file as base64.
-   */
-  getDownloadedFile(sessionId, filename) {
-    const session = sessionManager.getSession(sessionId);
-    if (!session) throw new Error('Invalid session');
-    const filePath = path.join(session.downloadDir, filename);
-    if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filename}`);
-    const buffer = fs.readFileSync(filePath);
-    const ext = path.extname(filename).toLowerCase();
-    return {
-      filename,
-      size: buffer.length,
-      mimeType: ext === '.xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        : ext === '.pdf' ? 'application/pdf'
-        : ext === '.json' ? 'application/json'
-        : 'application/octet-stream',
-      base64: buffer.toString('base64'),
-    };
   }
 
   async _waitForDownload(dir, timeout = 30000) {
@@ -1139,6 +1011,20 @@ class GSTPortal {
   async _selectViewFiledReturnsOption(page, desiredValue, { preferHints = [], avoidHints = [] } = {}) {
     if (!desiredValue) return false;
 
+    // The Financial Year / Month dropdowns' <option> lists are populated
+    // asynchronously (Angular fetches them via XHR) after the <select>
+    // element itself already exists — a single immediate attempt can race
+    // ahead of that and find no matching option yet. Retry briefly, same
+    // "poll, don't check once" pattern used elsewhere for this slower box.
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const ok = await this._trySelectViewFiledReturnsOption(page, desiredValue, preferHints, avoidHints);
+      if (ok) return true;
+      await this._sleep(300);
+    }
+    return false;
+  }
+
+  async _trySelectViewFiledReturnsOption(page, desiredValue, preferHints, avoidHints) {
     return page.evaluate((desiredValue, preferHints, avoidHints) => {
       const normalize = (value) => (value || '')
         .toString()
@@ -1716,21 +1602,6 @@ class GSTPortal {
     }, { timeout }).catch(() => {});
   }
 
-  async _returnsFetch(sessionId, path) {
-    const session = sessionManager.getSession(sessionId);
-    if (!session?.loggedIn) throw new Error('Not logged in');
-
-    const page = session.page;
-    return page.evaluate(async (path) => {
-      try {
-        const resp = await fetch(path, { credentials: 'include' });
-        return await resp.json();
-      } catch (e) {
-        return { error: e.message };
-      }
-    }, path);
-  }
-
   async _navigateToReturnsDashboard(session) {
     const { page } = session;
     await this._goToSearchTaxpayer(page);
@@ -1818,17 +1689,479 @@ class GSTPortal {
     });
   }
 
-  async screenshot(sessionId) {
-    const session = sessionManager.getSession(sessionId);
-    if (!session) throw new Error('Invalid session');
-    const buffer = await session.page.screenshot({ encoding: 'base64', fullPage: true });
-    return { screenshot: buffer };
+  // ─── NOTICES (logged-in taxpayer's OWN notices/orders) ───────────
+  // Notices are private: only fetchable for the GSTIN we're logged in as.
+
+  /**
+   * Reach a notices module by CLICKING nav (never page.goto — WAF-blocked).
+   * `which` = 'additional' | 'legacy'. Opens the Services → User Services menu
+   * so the submenu anchors render, then clicks the notices link by its visible
+   * text. Returns { clicked, targetText?, noticeNavTexts } — the nav-text list
+   * is diagnostic so we can adjust the match if the label differs.
+   */
+  async _navigateToNotices(session, which) {
+    const page = session.page;
+    const NOTICES_PATH = '/services/auth/notices';
+
+    // Already on the notices page (e.g. the 2nd section of a 'both' fetch) — reuse.
+    if (page.url().includes(NOTICES_PATH)) {
+      return { clicked: true, targetHref: page.url(), landedUrl: page.url(), reused: true };
+    }
+
+    // Reach the notices page by CLICKING the anchor whose href points at it.
+    // This is robust to menu LAYOUT (dropdown vs collapsed/hamburger at the
+    // headless viewport) and avoids clicking the top-level "Services" item, which
+    // on some pages NAVIGATES to the public /services/quicklinks/services list
+    // instead of toggling a menu. First ensure we're on an authenticated services
+    // page that carries the nav (drifted/ litserv pages don't).
+    if (!/services\.gst\.gov\.in\/services\/auth\//.test(page.url()) || /\/error\//.test(page.url())) {
+      await this._goToSearchTaxpayer(page).catch(() => {});
+      await this._settlePortalPage(page, { timeout: 2000, fallbackMs: 120 }).catch(() => {});
+    }
+
+    // Retry — the notices anchor may be lazily added and the capped box is slow.
+    let info = { clicked: false };
+    let navSample = [];
+    for (let attempt = 0; attempt < 5; attempt++) {
+      info = await page.evaluate((path) => {
+        const norm = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const nodes = Array.from(document.querySelectorAll('a, button'));
+        // Expand the "User Services" menu so a lazy notices anchor mounts. Only
+        // "click" it if it's a real toggle (href '' / '#' / javascript:), never a
+        // navigating link.
+        const tog = nodes.find((n) => norm(n) === 'user services' || norm(n).startsWith('user services'));
+        if (tog) {
+          tog.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+          tog.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+          const h = (tog.getAttribute('href') || '').trim().toLowerCase();
+          if (h === '' || h === '#' || h.startsWith('javascript')) tog.click();
+        }
+        // Click the notices anchor by href (protocol-relative "//host/..." is fine).
+        const link = Array.from(document.querySelectorAll('a')).find((a) => (a.getAttribute('href') || '').includes(path));
+        const sample = [...new Set(nodes.map(norm).filter(Boolean))].slice(0, 60);
+        if (link) { const href = link.getAttribute('href'); link.click(); return { clicked: true, targetHref: href, navSample: sample }; }
+        return { clicked: false, navSample: sample };
+      }, NOTICES_PATH);
+      navSample = info.navSample || navSample;
+      if (info.clicked) break;
+      await this._sleep(500 + attempt * 700);
+    }
+
+    if (info.clicked) {
+      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 12000 }).catch(() => {});
+      await this._settlePortalPage(page, { timeout: 2000, fallbackMs: 120 });
+      info.landedUrl = page.url();
+    } else {
+      info.currentUrl = page.url();
+      info.navSample = navSample;
+    }
+    return info;
   }
 
-  getCapturedApis(sessionId) {
+  /**
+   * Fetch the logged-in taxpayer's notices/orders as a normalized list.
+   * `section` = 'both' (default) | 'additional' | 'legacy'. Navigates to each
+   * module (WAF-safe click nav), lets the page fire its own XHRs, and merges the
+   * scraped table (display truth) with the captured API objects so each notice
+   * also carries the download identifiers (docId/applnId/caseId/arn).
+   */
+  async getNotices(sessionId, { section = 'both' } = {}) {
     const session = sessionManager.getSession(sessionId);
-    if (!session) throw new Error('Invalid session');
-    return session.capturedApis || [];
+    if (!session?.loggedIn) throw new Error('Not logged in');
+
+    const wanted = section === 'both' ? ['additional', 'legacy'] : [section];
+    const sections = {};
+    const all = [];
+    const seenUrls = new Set();
+    for (const which of wanted) {
+      const r = await this._getNoticesSection(session, which);
+      sections[which] = r;
+      // The portal appears to have merged "View Notices and Orders" into the
+      // unified /services/auth/notices page, so a second section can resolve to
+      // the same URL. Don't double-list those in the merged array.
+      if (r.landedUrl && seenUrls.has(r.landedUrl)) {
+        r.note = 'Resolved to the same page as an earlier section (portal merged these modules); notices omitted from the merged list to avoid duplicates.';
+        continue;
+      }
+      if (r.landedUrl) seenUrls.add(r.landedUrl);
+      for (const n of r.notices) all.push({ ...n, section: which });
+    }
+    return { count: all.length, notices: all, sections };
+  }
+
+  async _getNoticesSection(session, which) {
+    const page = session.page;
+
+    // Capture the notice-list XHRs the page fires while it renders.
+    const captured = [];
+    const handler = async (response) => {
+      const url = response.url();
+      if (!/\/api\/get\/notices|\/case\/task\/get/.test(url)) return;
+      try {
+        const text = await response.text().catch(() => null);
+        if (!text) return;
+        let data; try { data = JSON.parse(text); } catch { return; }
+        captured.push({ url, data });
+      } catch (_) { /* best-effort */ }
+    };
+    page.on('response', handler);
+
+    let nav;
+    let table = null;
+    try {
+      nav = await this._navigateToNotices(session, which);
+      if (nav.clicked) {
+        // Wait for the notices table to POPULATE — on the capped box the
+        // get/notices + case/task/get XHRs land well after navigation, so an
+        // immediate scrape returned 0 rows.
+        await page.waitForFunction(() => {
+          const t = document.querySelector('table');
+          return t && t.querySelectorAll('tbody tr').length > 0;
+        }, { timeout: 20000 }).catch(() => {});
+        table = await page.evaluate(() => {
+          const t = document.querySelector('table');
+          if (!t) return null;
+          return {
+            headers: Array.from(t.querySelectorAll('th')).map((th) => th.textContent.trim()),
+            rows: Array.from(t.querySelectorAll('tbody tr')).map((r) =>
+              Array.from(r.querySelectorAll('td')).map((td) => td.textContent.trim())),
+          };
+        }).catch(() => null);
+      }
+    } finally {
+      page.off('response', handler);
+    }
+
+    if (!nav.clicked) {
+      return {
+        notices: [],
+        warning: `Could not open the "${which}" notices menu.`,
+        navLabelsSeen: nav.noticeNavTexts,
+        currentUrl: nav.currentUrl || null,
+        navSample: nav.navSample || null,
+      };
+    }
+
+    // Index captured API objects by their id for enrichment.
+    const byId = new Map();
+    for (const c of captured) {
+      if (!Array.isArray(c.data)) continue;
+      for (const o of c.data) {
+        if (o && o.refId) byId.set(o.refId, { source: 'case', obj: o });
+        else if (o && o.noticeOrderId) byId.set(o.noticeOrderId, { source: 'order', obj: o });
+      }
+    }
+
+    const notices = (table?.rows || []).map((cells) => {
+      const [id, type, description, dateOfIssue, dueDate, action] = cells;
+      const match = byId.get(id);
+      const o = match?.obj || {};
+      return {
+        id,
+        type: type || null,
+        description: description || null,
+        dateOfIssue: dateOfIssue || null,
+        dueDate: dueDate && dueDate !== 'NA' ? dueDate : null,
+        action: action || null,
+        source: match?.source || null,
+        issuedBy: o.issuedBy ?? null,
+        amount: o.amount && o.amount !== 'NA' ? o.amount : null,
+        isRead: o.isRead != null ? o.isRead === 'Y' : null,
+        status: o.status ?? o.authStatus ?? null,
+        arn: o.arn ?? null,
+        // identifiers we'll use for document download (Phase: download)
+        refs: {
+          docId: o.docId ?? null,
+          applnId: o.applnId ?? null,
+          applnCd: o.applnCd ?? null,
+          caseId: o.caseId ?? null,
+          caseTypeCd: o.caseTpeCd ?? null,
+          caseFolderItemId: o.caseFolderItemId ?? null,
+        },
+      };
+    });
+
+    return { landedUrl: nav.landedUrl || null, targetHref: nav.targetHref || null, count: notices.length, notices };
+  }
+
+  /**
+   * Download an ORDER-type notice document as base64. Order notices (from
+   * /services/auth/api/get/notices) expose the PDF directly at
+   * GET /document/{docId}/{applnId} — the same URL the portal opens on "View".
+   * Pass the docId + applnId from a GET /notices order-type notice's `refs`.
+   */
+  async downloadOrderNotice(sessionId, { docId, applnId }) {
+    if (!docId || !applnId) throw new Error('docId and applnId are required (from an order-type notice\'s refs)');
+
+    // Notices are immutable once issued — cache like filed returns.
+    const session = sessionManager.getSession(sessionId);
+    const gstin = session?.userInfo?.gstin;
+    const cacheKey = gstin ? this._pdfCacheKey('NOTICE', gstin, `${docId}_${applnId}`) : null;
+    if (cacheKey) {
+      const cached = this._readCachedPdf(cacheKey);
+      if (cached) return cached;
+    }
+
+    const url = `https://services.gst.gov.in/document/${docId}/${applnId}`;
+    const result = await this._downloadBinaryInPage(sessionId, url);
+    if (cacheKey && result?.base64) {
+      this._writeCachedPdf(cacheKey, Buffer.from(result.base64, 'base64'));
+    }
+    return result;
+  }
+
+  /**
+   * Fetch a same-origin binary document (PDF) with the logged-in session's
+   * cookies and return it base64-encoded. Ensures we're on a services.gst.gov.in
+   * page first (same-origin + WAF), then does an in-page fetch → arrayBuffer →
+   * base64. Serialized through the rate limiter like the other portal calls.
+   */
+  async _downloadBinaryInPage(sessionId, url) {
+    return rateLimiter.schedule(async () => {
+      const session = sessionManager.getSession(sessionId);
+      if (!session?.loggedIn) throw new Error('Not logged in');
+      const page = session.page;
+
+      let onServices = false;
+      try { onServices = new URL(page.url()).origin === 'https://services.gst.gov.in' && !page.url().includes('/error/'); } catch (_) {}
+      if (!onServices) await this._goToSearchTaxpayer(page);
+
+      const result = await page.evaluate(async (url) => {
+        try {
+          const resp = await fetch(url, { credentials: 'include' });
+          const buf = await resp.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          let binary = '';
+          const chunk = 0x8000;
+          for (let i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+          }
+          return {
+            ok: resp.ok,
+            status: resp.status,
+            contentType: resp.headers.get('content-type') || '',
+            base64: btoa(binary),
+            size: bytes.length,
+          };
+        } catch (e) { return { error: e.message }; }
+      }, url);
+
+      if (result.error) throw new Error(`Document fetch failed: ${result.error}`);
+      if (!result.ok) throw new Error(`Document fetch failed: HTTP ${result.status}`);
+      // A tiny "PDF" is usually an HTML error/redirect, not a real document.
+      const looksHtml = /text\/html/i.test(result.contentType);
+      if (looksHtml) throw new Error(`Expected a document but got HTML (likely a WAF/redirect); size=${result.size}`);
+      return {
+        mimeType: result.contentType || 'application/pdf',
+        size: result.size,
+        base64: result.base64,
+      };
+    });
+  }
+
+  /**
+   * List the documents inside a CASE-type notice's case folder. Walks the
+   * litserv case-folder chain (folders → items → parse itemJson for docs). Pass
+   * caseId + arn + caseTypeCd from a case-type notice (refs.caseId, arn,
+   * refs.caseTypeCd).
+   * Returns { documents: [{ docName, docId, contentType, docType, folder, refId }] }.
+   * Use a document's `docName` with POST /notices/case/download to fetch it.
+   */
+  async getCaseDocuments(sessionId, { caseId, arn, caseTypeCd } = {}) {
+    const session = sessionManager.getSession(sessionId);
+    if (!session?.loggedIn) throw new Error('Not logged in');
+    if (!caseId || !arn || !caseTypeCd) {
+      throw new Error('caseId, arn and caseTypeCd are required (from a case-type notice: refs.caseId, arn, refs.caseTypeCd)');
+    }
+    const gstin = session.userInfo?.gstin;
+    if (!gstin) throw new Error('Could not determine the logged-in GSTIN from the session');
+
+    const folders = await this.callPortalApi(
+      sessionId, 'https://services.gst.gov.in/litserv/auth/api/case/folder', 'POST',
+      { caseId, gstid: gstin, caseTypeCd });
+
+    const docs = [];
+    const seen = new Set();
+    for (const f of (Array.isArray(folders) ? folders : [])) {
+      if (!f?.caseFolderId) continue;
+      const items = await this.callPortalApi(
+        sessionId, 'https://services.gst.gov.in/litserv/auth/api/case/folder/items', 'POST',
+        { caseFolderId: f.caseFolderId });
+      for (const it of (Array.isArray(items) ? items : [])) {
+        let parsed = null;
+        try { parsed = JSON.parse(it.itemJson); } catch { /* non-JSON item */ }
+        const found = [];
+        this._collectDocs(parsed, found, new Set());
+        for (const d of found) {
+          if (seen.has(d.docId)) continue;
+          seen.add(d.docId);
+          docs.push({ ...d, folder: f.caseFolderTypeName || null, folderType: f.caseFolderTypeCd || null, refId: it.refId || null });
+        }
+      }
+    }
+
+    return { caseId, arn, caseTypeCd, count: docs.length, documents: docs };
+  }
+
+  /**
+   * Download one document from a case-type notice's case folder as base64. The
+   * portal serves case documents only via a click that streams the file (the
+   * URL is protected and returns an attachment), so we drive the UI: open the
+   * notice's case folder, click the document whose name matches, and read the
+   * downloaded file. Body: { id: notice id, docName: from getCaseDocuments,
+   * folder?: the document's `folder` field from getCaseDocuments — when given
+   * and it matches a known tab, that tab is tried first instead of scanning
+   * every tab in a fixed order }.
+   */
+  async downloadCaseDocument(sessionId, { id, docName, folder } = {}) {
+    const session = sessionManager.getSession(sessionId);
+    if (!session?.loggedIn) throw new Error('Not logged in');
+    if (!id || !docName) throw new Error('id (the notice id) and docName are required (docName from GET /notices/case/documents)');
+
+    // Case documents are immutable once filed — cache like filed returns, but
+    // without the PDF-only assumption (case docs can be pdf/zip/jpg/png).
+    const gstin = session.userInfo?.gstin;
+    const cacheKey = gstin
+      ? `CASEDOC_${this._sanitizeCacheSegment(gstin)}_${this._sanitizeCacheSegment(id)}_${this._sanitizeCacheSegment(docName)}`
+      : null;
+    if (cacheKey) {
+      const cached = this._readCacheBuffer(cacheKey);
+      if (cached) {
+        return { filename: docName, size: cached.length, mimeType: 'application/pdf', base64: cached.toString('base64'), cached: true };
+      }
+    }
+
+    const page = session.page;
+    const downloadDir = session.downloadDir;
+
+    const opened = await this._openNoticeCaseFolder(session, id);
+    if (!opened.ok) throw new Error(opened.reason || `Could not open the case folder for notice ${id}`);
+    const folderUrl = page.url();
+
+    // Start from an empty download dir so we grab exactly this file.
+    try { for (const f of fs.readdirSync(downloadDir)) fs.unlinkSync(path.join(downloadDir, f)); } catch (_) {}
+
+    const tryClickDoc = () => page.evaluate((docName) => {
+      // The portal's on-page link text often omits the file extension that
+      // getCaseDocuments' docName carries (e.g. anchor "Notice of Personal
+      // Hearing" vs docName "Notice of Personal Hearing.pdf"), and can differ
+      // in case too (anchor "virtual hearing" vs docName "Virtual Hearing.pdf")
+      // — strip a trailing extension and lowercase both sides before
+      // comparing, and match in either direction since either string can be
+      // the longer one.
+      const stripExt = (s) => (s || '').replace(/\.(pdf|zip|jpe?g|png|docx?|xlsx?)$/i, '');
+      const norm = (s) => stripExt((s || '').replace(/\s+/g, ' ').trim()).toLowerCase();
+      const GENERIC = new Set(['back', 'reply', 'view', 'edit', 'submit', 'cancel', 'close', 'print', 'download']);
+      const want = norm(docName);
+      const anchors = Array.from(document.querySelectorAll('a'));
+      const target = anchors.find((a) => norm(a.textContent) === want)
+        || anchors.find((a) => {
+          const t = norm(a.textContent);
+          if (!t || t.length < 8 || GENERIC.has(t)) return false;
+          return t.includes(want) || want.includes(t);
+        });
+      if (target) { target.click(); return { ok: true }; }
+      const names = [...new Set(anchors.map((a) => (a.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean))].slice(0, 60);
+      return { ok: false, docsSeen: names };
+    }, docName);
+
+    let clicked = await tryClickDoc();
+    const allDocsSeen = new Set(clicked.docsSeen || []);
+
+    // The case folder is organized into category tabs (NOTICES, REPLIES,
+    // ORDERS, APPLICATIONS, ...) — only one is active/rendered by default, so
+    // the target document may sit under a tab we haven't opened yet. If the
+    // caller told us which folder this document came from (from
+    // getCaseDocuments), try that tab first — usually finds it in one hop
+    // instead of cycling every tab. Click through the rest (same client-side
+    // page — same litserv/case/folder URL), re-scanning after each and
+    // bailing out if a click ever navigates away.
+    if (!clicked.ok) {
+      const hinted = CASE_FOLDER_TABS.find((t) => t.toLowerCase() === String(folder || '').trim().toLowerCase());
+      const tabOrder = hinted ? [hinted, ...CASE_FOLDER_TABS.filter((t) => t !== hinted)] : CASE_FOLDER_TABS;
+      for (const tabLabel of tabOrder) {
+        if (page.url() !== folderUrl) break; // unexpected navigation — stop
+        const switched = await page.evaluate((label) => {
+          const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toUpperCase();
+          const el = Array.from(document.querySelectorAll('a, button, [role="tab"], li, span'))
+            .find((n) => norm(n.textContent) === label && (n.offsetWidth || n.offsetHeight || n.getClientRects().length));
+          if (el) { el.click(); return true; }
+          return false;
+        }, tabLabel);
+        if (!switched) continue;
+        await this._sleep(400);
+        await this._settlePortalPage(page, { timeout: 1200, fallbackMs: 100 }).catch(() => {});
+        if (page.url() !== folderUrl) break; // tab click navigated away — stop
+        clicked = await tryClickDoc();
+        for (const d of (clicked.docsSeen || [])) allDocsSeen.add(d);
+        if (clicked.ok) break;
+      }
+    }
+
+    if (!clicked.ok) {
+      const dumpPath = await this._dumpDiag(session, page, 'case-doc-not-found');
+      const dumpNote = dumpPath ? ` Diagnostic dump: ${dumpPath}` : '';
+      throw new Error(`Document "${docName}" not found in the case folder (checked all tabs). Documents visible: ${JSON.stringify([...allDocsSeen])}.${dumpNote}`);
+    }
+
+    const file = await this._waitForDownload(downloadDir, DOWNLOAD_TIMEOUT_MS);
+    if (!file) throw new Error('Case document download timed out');
+    const filePath = path.join(downloadDir, file);
+    const buffer = fs.readFileSync(filePath);
+    fs.rmSync(filePath, { force: true });
+    if (cacheKey) this._writeCacheBuffer(cacheKey, buffer);
+    return { filename: file, size: buffer.length, mimeType: 'application/pdf', base64: buffer.toString('base64') };
+  }
+
+  /**
+   * Open a case-type notice's case folder by clicking its row's "View" in the
+   * Additional Notices table (WAF-safe click nav). Returns { ok, url }.
+   */
+  async _openNoticeCaseFolder(session, id) {
+    const page = session.page;
+    await this._navigateToNotices(session, 'additional');
+    // Wait for the notices table to populate before looking for the row (slow box).
+    await page.waitForFunction(() => {
+      const t = document.querySelector('table');
+      return t && t.querySelectorAll('tbody tr').length > 0;
+    }, { timeout: 20000 }).catch(() => {});
+    const clicked = await page.evaluate((id) => {
+      const rows = Array.from(document.querySelectorAll('table tbody tr'));
+      for (const r of rows) {
+        const cells = Array.from(r.querySelectorAll('td')).map((td) => td.textContent.trim());
+        if (cells[0] === id) {
+          const el = Array.from(r.querySelectorAll('a, button')).find((e) => /view/i.test(e.textContent || ''));
+          if (el) { el.click(); return { ok: true }; }
+          return { ok: false, reason: 'row found but no View control' };
+        }
+      }
+      return { ok: false, reason: `no notice row matched id ${id}` };
+    }, id);
+    if (!clicked.ok) return clicked;
+    await this._sleep(4000);
+    await this._settlePortalPage(page, { timeout: 3000, fallbackMs: 150 }).catch(() => {});
+    const url = page.url();
+    if (!/litserv\/auth\/case\/folder/.test(url)) {
+      return { ok: false, reason: `notice ${id} did not open a case folder (landed on ${url}) — is it a case-type notice?` };
+    }
+    return { ok: true, url };
+  }
+
+  /**
+   * Recursively collect document descriptors from a parsed case-folder itemJson.
+   * Docs appear as `{ dcupdtls: { id, docName, ct, ty } }` (in maindocs /
+   * suppdocs / docModel arrays) whose nesting varies by notice type, so we
+   * deep-scan rather than assume a fixed path. Dedups by doc id.
+   */
+  _collectDocs(node, out, seen) {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) { for (const x of node) this._collectDocs(x, out, seen); return; }
+    const d = node.dcupdtls || ((node.id && node.docName) ? node : null);
+    if (d && d.id && d.docName && !seen.has(String(d.id))) {
+      seen.add(String(d.id));
+      out.push({ docId: String(d.id), docName: d.docName, contentType: d.ct || null, docType: d.ty || null });
+    }
+    for (const k of Object.keys(node)) this._collectDocs(node[k], out, seen);
   }
 }
 

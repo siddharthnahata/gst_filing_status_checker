@@ -4,6 +4,7 @@ const { apiKeyAuth } = require('./middleware/api-key');
 const authRoutes = require('./routes/auth');
 const returnsRoutes = require('./routes/returns');
 const publicRoutes = require('./routes/public');
+const noticesRoutes = require('./routes/notices');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -49,6 +50,7 @@ app.use(apiKeyAuth);
 app.use('/auth', authRoutes);
 app.use('/returns', returnsRoutes);
 app.use('/public', publicRoutes);
+app.use('/notices', noticesRoutes);
 
 let shuttingDown = false;
 const shutdown = async () => {

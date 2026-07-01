@@ -1,6 +1,6 @@
 {
   "name": "gst-filing-status-checker",
-  "version": "3.0.5",
+  "version": "3.1.0",
   "description": "GST Filing Status Checker Desktop App",
   "main": "main.js",
   "scripts": {
@@ -57,6 +57,7 @@
     "electron-updater": "^6.8.9",
     "jszip": "^3.10.1",
     "nodemailer": "^6.9.9",
+    "pdf-parse": "^1.1.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

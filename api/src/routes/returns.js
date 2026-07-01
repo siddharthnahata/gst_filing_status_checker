@@ -25,7 +25,7 @@ const handler = (fn) => async (req, res) => {
 
 router.post('/gstr1/download-pdf', handler(async (req) => {
   const sessionId = getSession(req);
-  const { financialYear, returnPeriod, filingPeriod, month, returnType } = req.body;
+  const { financialYear, returnPeriod, filingPeriod, month, returnType, forceRefresh } = req.body;
   if (!financialYear || !(month || returnPeriod)) {
     throw { status: 400, message: 'financialYear and month or returnPeriod are required' };
   }
@@ -35,12 +35,13 @@ router.post('/gstr1/download-pdf', handler(async (req) => {
     filingPeriod,
     month,
     returnType,
+    forceRefresh,
   });
 }));
 
 router.post('/gstr3b/download-pdf', handler(async (req) => {
   const sessionId = getSession(req);
-  const { financialYear, returnPeriod, filingPeriod, month, returnType } = req.body;
+  const { financialYear, returnPeriod, filingPeriod, month, returnType, forceRefresh } = req.body;
   if (!financialYear || !(month || returnPeriod)) {
     throw { status: 400, message: 'financialYear and month or returnPeriod are required' };
   }
@@ -50,6 +51,7 @@ router.post('/gstr3b/download-pdf', handler(async (req) => {
     filingPeriod,
     month,
     returnType,
+    forceRefresh,
   });
 }));
 

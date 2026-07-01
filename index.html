@@ -19,11 +19,6 @@
   </div>
 </header>
 
-<!-- ── Engine Status Bar ──────────────────────────────────────── -->
-<div class="api-bar api-bar-local">
-  <span class="local-api-dot" id="localApiDot">●</span>
-  <span id="localApiLabel">Starting local engine…</span>
-</div>
 
 <!-- ── Update Banner ──────────────────────────────────────────── -->
 <div class="update-banner hidden" id="updateBanner">
@@ -35,6 +30,10 @@
 <div class="tab-bar">
   <button class="tab-btn active" data-tab="tab-checker">Filing Status Check</button>
   <button class="tab-btn" data-tab="tab-download">Return Downloads · PDF</button>
+  <button class="tab-btn" data-tab="tab-notices">Notices</button>
+  <div class="tab-bar-spacer"></div>
+  <button class="tab-bar-action" id="manageAiBtn" title="Manage AI provider API keys">🤖 Manage AI</button>
+  <button class="tab-bar-action" id="manageAccountsBtn" title="Manage saved accounts">⚙ Manage Accounts</button>
 </div>
 
 <!-- ── Tab Panels ─────────────────────────────────────────────── -->
@@ -56,11 +55,6 @@
             <select id="savedAccounts"><option value="">— select saved account —</option></select>
             <button class="btn-icon" id="saveAccountBtn" title="Save current credentials">💾</button>
             <button class="btn-icon btn-icon-danger" id="deleteAccountBtn" title="Delete selected">✕</button>
-          </div>
-          <div class="accounts-bulk-row" style="margin-bottom:8px;">
-            <button class="btn-xs btn-secondary" id="importCredsBtn">↑ Import</button>
-            <button class="btn-xs btn-secondary" id="exportCredsBtn">↓ Export</button>
-            <button class="btn-xs btn-danger" id="clearAllAccountsBtn">✕ Clear All</button>
           </div>
           <div class="field-row field-row-2">
             <div class="field">
@@ -282,91 +276,169 @@
           <div id="dlSessionStatus" class="dl-session-status inactive">● No active session</div>
         </div>
 
-        <!-- Return to Download -->
+        <!-- Download Mode -->
         <div class="form-section">
-          <div class="section-label">Return to Download</div>
+          <div class="section-label">Download Mode</div>
           <div class="field">
-            <label>Return Type</label>
-            <select id="dlReturnType">
-              <option value="GSTR1">GSTR-1 (Monthly)</option>
-              <option value="GSTR3B">GSTR-3B (Monthly)</option>
+            <select id="dlMode">
+              <option value="single">Single Period</option>
+              <option value="bulk">Bulk Range</option>
             </select>
           </div>
-          <div class="field-row field-row-2">
-            <div class="field">
-              <label>Month</label>
-              <select id="dlMonth">
-                <option>January</option><option>February</option><option>March</option>
-                <option>April</option><option selected>May</option><option>June</option>
-                <option>July</option><option>August</option><option>September</option>
-                <option>October</option><option>November</option><option>December</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Year</label>
-              <select id="dlYear"></select>
-            </div>
-          </div>
-          <div class="text-muted" id="dlFyDisplay" style="margin-top:3px;"></div>
         </div>
 
-        <!-- Single download action row (not sticky — sits inline) -->
-        <div class="action-row">
-          <button class="btn-run" id="dlLoginDownloadBtn">▶ Login &amp; Download PDF</button>
-          <button class="btn-secondary" id="dlLogoutBtn" title="End client session">Logout</button>
+        <!-- Return to Download (Single) -->
+        <div id="dlSingleSection">
+          <div class="form-section">
+            <div class="section-label">Return to Download</div>
+            <div class="field">
+              <label>Return Type</label>
+              <select id="dlReturnType">
+                <option value="GSTR1">GSTR-1 (Monthly)</option>
+                <option value="GSTR3B">GSTR-3B (Monthly)</option>
+              </select>
+            </div>
+            <div class="field-row field-row-2">
+              <div class="field">
+                <label>Month</label>
+                <select id="dlMonth">
+                  <option>January</option><option>February</option><option>March</option>
+                  <option>April</option><option selected>May</option><option>June</option>
+                  <option>July</option><option>August</option><option>September</option>
+                  <option>October</option><option>November</option><option>December</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Year</label>
+                <select id="dlYear"></select>
+              </div>
+            </div>
+            <div class="text-muted" id="dlFyDisplay" style="margin-top:5px;"></div>
+          </div>
+
+          <!-- Single download action row (not sticky — sits inline) -->
+          <label class="check-toggle force-refresh-toggle" title="Filed returns don't change once filed, so a repeat download is normally served instantly from a local cache. Check this to bypass the cache and re-fetch from the portal.">
+            <input type="checkbox" id="dlForceRefresh"> Force refresh (skip cache)
+          </label>
+          <div class="action-row">
+            <button class="btn-run" id="dlLoginDownloadBtn">▶ Login &amp; Download PDF</button>
+            <button class="btn-secondary" id="dlLogoutBtn" title="End client session">Logout</button>
+          </div>
         </div>
 
         <!-- Bulk Download Range -->
-        <div class="form-section">
-          <div class="section-label">Bulk Download · Range</div>
-          <div class="smtp-note" style="margin-bottom:8px;">
-            Downloads all returns in the range, waits 1–2 s between requests, saves a single ZIP.
-          </div>
-          <div class="field">
-            <label>Return Type</label>
-            <select id="dlBulkReturnType">
-              <option value="GSTR1">GSTR-1 / GSTR-1FF (Monthly)</option>
-              <option value="GSTR3B">GSTR-3B (Monthly)</option>
-            </select>
-          </div>
-          <div class="field-row field-row-2">
+        <div id="dlBulkSection" class="hidden">
+          <div class="form-section">
+            <div class="section-label">Bulk Download · Range</div>
+            <div class="smtp-note" style="margin-bottom:8px;">
+              Downloads all returns in the range, waits 1–2 s between requests, saves a single ZIP.
+            </div>
             <div class="field">
-              <label>From Month</label>
-              <select id="dlBulkStartMonth">
-                <option>January</option><option>February</option><option>March</option>
-                <option selected>April</option><option>May</option><option>June</option>
-                <option>July</option><option>August</option><option>September</option>
-                <option>October</option><option>November</option><option>December</option>
+              <label>Return Type</label>
+              <select id="dlBulkReturnType">
+                <option value="GSTR1">GSTR-1 / GSTR-1FF (Monthly)</option>
+                <option value="GSTR3B">GSTR-3B (Monthly)</option>
               </select>
             </div>
-            <div class="field">
-              <label>Year</label>
-              <select id="dlBulkStartYear"></select>
+            <div class="field-row field-row-2">
+              <div class="field">
+                <label>From Month</label>
+                <select id="dlBulkStartMonth">
+                  <option>January</option><option>February</option><option>March</option>
+                  <option selected>April</option><option>May</option><option>June</option>
+                  <option>July</option><option>August</option><option>September</option>
+                  <option>October</option><option>November</option><option>December</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Year</label>
+                <select id="dlBulkStartYear"></select>
+              </div>
+            </div>
+            <div class="field-row field-row-2">
+              <div class="field">
+                <label>To Month</label>
+                <select id="dlBulkEndMonth">
+                  <option>January</option><option>February</option><option>March</option>
+                  <option>April</option><option>May</option><option>June</option>
+                  <option>July</option><option>August</option><option>September</option>
+                  <option>October</option><option>November</option>
+                  <option selected>December</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Year</label>
+                <select id="dlBulkEndYear"></select>
+              </div>
             </div>
           </div>
-          <div class="field-row field-row-2">
-            <div class="field">
-              <label>To Month</label>
-              <select id="dlBulkEndMonth">
-                <option>January</option><option>February</option><option>March</option>
-                <option>April</option><option>May</option><option>June</option>
-                <option>July</option><option>August</option><option>September</option>
-                <option>October</option><option>November</option>
-                <option selected>December</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Year</label>
-              <select id="dlBulkEndYear"></select>
-            </div>
+
+          <label class="check-toggle force-refresh-toggle" title="Filed returns don't change once filed, so a repeat download is normally served instantly from a local cache. Check this to bypass the cache and re-fetch from the portal.">
+            <input type="checkbox" id="dlBulkForceRefresh"> Force refresh (skip cache)
+          </label>
+          <!-- Sticky action strip for bulk -->
+          <div class="action-strip">
+            <button class="btn-run" id="dlBulkDownloadBtn">↓ Bulk Download &amp; ZIP</button>
+            <button class="btn-danger" id="dlBulkStopBtn" disabled>■ Stop</button>
           </div>
         </div>
 
-        <!-- Sticky action strip for bulk -->
-        <div class="action-strip">
-          <button class="btn-run" id="dlBulkDownloadBtn">↓ Bulk Download &amp; ZIP</button>
-          <button class="btn-danger" id="dlBulkStopBtn" disabled>■ Stop</button>
-        </div>
+        <!-- Email PDF to client — collapsed by default -->
+        <details class="form-section">
+          <summary>Email PDF to Client</summary>
+          <div class="smtp-inner">
+            <label class="check-toggle" style="margin-bottom:8px;">
+              <input type="checkbox" id="dlEmailEnabled"> Email the PDF after each successful download
+            </label>
+            <div class="smtp-note">
+              Gmail: use a 16-char App Password (2FA required). Placeholders: <code>{gstin}</code> <code>{period}</code> <code>{returnType}</code>.
+            </div>
+            <div class="field">
+              <label>Send To</label>
+              <input type="email" id="dlEmailTo" placeholder="Defaults to the client's saved email if blank">
+            </div>
+            <div class="field-row field-row-3">
+              <div class="field">
+                <label>SMTP Host</label>
+                <input type="text" id="dlSmtpHost" placeholder="smtp.gmail.com">
+              </div>
+              <div class="field">
+                <label>Port</label>
+                <input type="number" id="dlSmtpPort" value="465" min="1" max="65535">
+              </div>
+              <div class="field">
+                <label>Security</label>
+                <select id="dlSmtpSecure">
+                  <option value="465">SSL 465</option>
+                  <option value="587">TLS 587</option>
+                  <option value="25">Plain 25</option>
+                </select>
+              </div>
+            </div>
+            <div class="field-row field-row-2">
+              <div class="field">
+                <label>SMTP User</label>
+                <input type="text" id="dlSmtpUser" placeholder="you@gmail.com">
+              </div>
+              <div class="field">
+                <label>App Password</label>
+                <input type="password" id="dlSmtpPass" placeholder="16-char app password">
+              </div>
+            </div>
+            <div class="field">
+              <label>From</label>
+              <input type="text" id="dlSmtpFrom" placeholder="Your Name &lt;you@gmail.com&gt;">
+            </div>
+            <div class="field">
+              <label>Subject</label>
+              <input type="text" id="dlEmailSubject" placeholder="Your {returnType} for {period} — {gstin}">
+            </div>
+            <div class="field">
+              <label>Body</label>
+              <textarea id="dlEmailBody" placeholder="Dear Taxpayer,&#10;&#10;Please find attached your {returnType} for {period}.&#10;GSTIN: {gstin}"></textarea>
+            </div>
+          </div>
+        </details>
 
       </div><!-- /config-panel -->
 
@@ -395,11 +467,158 @@
     </div><!-- /panel-body -->
   </div><!-- #tab-download -->
 
+
+  <!-- ════════════════════════════════════════════════════════════
+       TAB 3 — Notices
+       ════════════════════════════════════════════════════════════ -->
+  <div class="tab-panel" id="tab-notices">
+    <div class="panel-body">
+
+      <!-- ── Setup Column ──────────────────────────────────────── -->
+      <div class="config-panel">
+
+        <!-- Client Account -->
+        <div class="form-section">
+          <div class="section-label">Client Account</div>
+          <div class="smtp-note" style="margin-bottom:8px;">
+            Log in as the <strong>client whose notices you want to check</strong> — separate session from the other tabs. Notices are private to the logged-in GSTIN.
+          </div>
+          <div class="accounts-row">
+            <select id="ntcSavedAccounts"><option value="">— select saved account —</option></select>
+            <button class="btn-icon" id="ntcSaveAccountBtn" title="Save current credentials">💾</button>
+            <button class="btn-icon btn-icon-danger" id="ntcDeleteAccountBtn" title="Delete selected">✕</button>
+          </div>
+          <div class="field-row field-row-2" style="margin-top:8px;">
+            <div class="field">
+              <label>Username</label>
+              <input type="text" id="ntcUsername" placeholder="Client user ID" autocomplete="off">
+            </div>
+            <div class="field">
+              <label>Password</label>
+              <input type="password" id="ntcPassword" placeholder="Client password" autocomplete="new-password">
+            </div>
+          </div>
+          <div class="field-row field-row-2">
+            <div class="field">
+              <label>GSTIN <span class="label-optional">saved with account</span></label>
+              <input type="text" id="ntcAccountGstin" placeholder="15-char GSTIN" autocomplete="off" maxlength="15">
+            </div>
+            <div class="field">
+              <label>Email <span class="label-optional">saved with account</span></label>
+              <input type="email" id="ntcAccountEmail" placeholder="contact@example.com">
+            </div>
+          </div>
+          <div id="ntcSessionStatus" class="dl-session-status inactive">● No active session</div>
+        </div>
+
+        <!-- Fetch action -->
+        <div class="action-row">
+          <button class="btn-run" id="ntcLoginFetchBtn">▶ Login &amp; Fetch Notices</button>
+          <button class="btn-secondary" id="ntcLogoutBtn" title="End client session">Logout</button>
+        </div>
+
+        <!-- Email settings — collapsed by default. Sending itself is done via
+             the ✉ icon next to each download button, not automatically. -->
+        <details class="form-section">
+          <summary>Email Settings</summary>
+          <div class="smtp-inner">
+            <div class="smtp-note">
+              Click the ✉ icon next to a download to email that document — this only configures how. Gmail: use a 16-char App Password (2FA required). Placeholders: <code>{gstin}</code> <code>{noticeId}</code> <code>{description}</code>.
+            </div>
+            <div class="field">
+              <label>Send To</label>
+              <input type="email" id="ntcEmailTo" placeholder="Defaults to the client's saved email if blank">
+            </div>
+            <div class="field-row field-row-3">
+              <div class="field">
+                <label>SMTP Host</label>
+                <input type="text" id="ntcSmtpHost" placeholder="smtp.gmail.com">
+              </div>
+              <div class="field">
+                <label>Port</label>
+                <input type="number" id="ntcSmtpPort" value="465" min="1" max="65535">
+              </div>
+              <div class="field">
+                <label>Security</label>
+                <select id="ntcSmtpSecure">
+                  <option value="465">SSL 465</option>
+                  <option value="587">TLS 587</option>
+                  <option value="25">Plain 25</option>
+                </select>
+              </div>
+            </div>
+            <div class="field-row field-row-2">
+              <div class="field">
+                <label>SMTP User</label>
+                <input type="text" id="ntcSmtpUser" placeholder="you@gmail.com">
+              </div>
+              <div class="field">
+                <label>App Password</label>
+                <input type="password" id="ntcSmtpPass" placeholder="16-char app password">
+              </div>
+            </div>
+            <div class="field">
+              <label>From</label>
+              <input type="text" id="ntcSmtpFrom" placeholder="Your Name &lt;you@gmail.com&gt;">
+            </div>
+            <div class="field">
+              <label>Subject</label>
+              <input type="text" id="ntcEmailSubject" placeholder="GST Notice {noticeId} — {gstin}">
+            </div>
+            <div class="field">
+              <label>Body</label>
+              <textarea id="ntcEmailBody" placeholder="Dear Taxpayer,&#10;&#10;Please find attached a document for notice {noticeId}.&#10;{description}&#10;GSTIN: {gstin}"></textarea>
+            </div>
+          </div>
+        </details>
+
+      </div><!-- /config-panel -->
+
+      <!-- ── Progress & Results Column ─────────────────────────── -->
+      <div class="progress-panel">
+
+        <!-- Log -->
+        <div class="p-section">
+          <div id="ntcStatus" class="dl-status hidden"></div>
+          <div class="log" id="ntcLog"></div>
+        </div>
+
+        <!-- Notices Table -->
+        <div class="p-section hidden" id="noticesSection">
+          <div class="results-header">
+            <div class="section-label">Notices</div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Type</th>
+                  <th>Description</th>
+                  <th>Issued</th>
+                  <th>Due</th>
+                  <th>Status</th>
+                  <th>ARN</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="noticesTbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /progress-panel -->
+    </div><!-- /panel-body -->
+  </div><!-- #tab-notices -->
+
 </div><!-- /tab-panels -->
 
 <!-- ── Footer ─────────────────────────────────────────────────── -->
 <footer class="app-footer">
   <span id="appVersionLabel"></span> &nbsp;·&nbsp; For errors or feedback — <a href="mailto:siddharthnahata492@gmail.com">siddharthnahata492@gmail.com</a>
+  <label class="check-toggle footer-debug-toggle" title="When enabled, a failed download/notice fetch saves a screenshot + page-state dump to your temp folder for troubleshooting. Restart the app after changing this.">
+    <input type="checkbox" id="debugModeToggle"> Debug diagnostics
+  </label>
 </footer>
 
 <!-- ── Captcha Modals — fixed overlays, outside tab panels ──────── -->
@@ -437,6 +656,227 @@
       <button class="btn-secondary" id="dlCaptchaRefreshBtn" title="Refresh captcha">↺</button>
     </div>
     <div id="dlCaptchaError" class="captcha-error hidden"></div>
+  </div>
+</div>
+
+<div class="captcha-modal hidden" id="ntcCaptchaSection">
+  <div class="captcha-box">
+    <div class="captcha-box-title">
+      <span>🔐 Captcha Required</span>
+      <button class="captcha-close-btn" id="ntcCaptchaCancelBtn" title="Cancel">✕</button>
+    </div>
+    <div class="captcha-img-wrap">
+      <img id="ntcCaptchaImg" src="" alt="CAPTCHA">
+    </div>
+    <div class="captcha-input-row">
+      <input type="text" id="ntcCaptchaInput" placeholder="Enter captcha" autocomplete="off" spellcheck="false">
+      <button class="btn-warning" id="ntcCaptchaSubmitBtn">Submit</button>
+      <button class="btn-secondary" id="ntcCaptchaRefreshBtn" title="Refresh captcha">↺</button>
+    </div>
+    <div id="ntcCaptchaError" class="captcha-error hidden"></div>
+  </div>
+</div>
+
+<div class="manage-modal hidden" id="caseDocsModal">
+  <div class="manage-box">
+    <div class="manage-box-title">
+      <span id="caseDocsTitle">📁 Case Documents</span>
+      <button class="captcha-close-btn" id="caseDocsCloseBtn" title="Close">✕</button>
+    </div>
+    <div class="manage-bulk-row">
+      <button class="btn-xs btn-secondary" id="caseDocsDownloadAllBtn">⬇ Download All</button>
+      <button class="btn-xs btn-secondary" id="caseDocsEmailAllBtn" title="Email all documents as one ZIP">✉ Email All</button>
+    </div>
+    <div class="manage-list-wrap">
+      <table>
+        <thead>
+          <tr><th>Document</th><th>Type</th><th></th></tr>
+        </thead>
+        <tbody id="caseDocsTbody"></tbody>
+      </table>
+      <div id="caseDocsEmpty" class="manage-empty text-muted hidden">No documents found in this case folder.</div>
+    </div>
+  </div>
+</div>
+
+<div class="manage-modal hidden" id="emailPreviewModal">
+  <div class="manage-box">
+    <div class="manage-box-title">
+      <span>✉ Send Email</span>
+      <button class="captcha-close-btn" id="emailPreviewCloseBtn" title="Close">✕</button>
+    </div>
+    <div class="field">
+      <label>To</label>
+      <div class="text-muted" id="emailPreviewTo"></div>
+    </div>
+    <div class="field">
+      <label>Subject</label>
+      <div class="text-muted" id="emailPreviewSubject"></div>
+    </div>
+    <div class="field">
+      <label>Body</label>
+      <div class="text-muted" id="emailPreviewBody" style="white-space:pre-wrap; max-height:160px; overflow:auto; border:1px solid var(--b1); border-radius:var(--r); padding:8px;"></div>
+    </div>
+    <div class="field">
+      <label>Attachment</label>
+      <div class="text-muted" id="emailPreviewAttachment"></div>
+    </div>
+    <div id="emailPreviewError" class="captcha-error hidden"></div>
+    <div class="action-row" style="margin-top:10px;">
+      <button class="btn-secondary" id="emailPreviewCancelBtn">Cancel</button>
+      <button class="btn-run" id="emailPreviewSendBtn">✉ Send</button>
+    </div>
+  </div>
+</div>
+
+<div class="manage-modal hidden" id="aiSummaryModal">
+  <div class="manage-box" style="width:560px;">
+    <div class="manage-box-title">
+      <span>✨ AI Summary — <span id="aiSummaryNoticeId"></span></span>
+      <button class="captcha-close-btn" id="aiSummaryCloseBtn" title="Close">✕</button>
+    </div>
+
+    <div id="aiSummarySetup">
+      <div class="field">
+        <label>Documents in this case (<span id="aiSummaryDocCount">0</span>)</label>
+        <div class="manage-list-wrap" style="max-height:100px;">
+          <ul id="aiSummaryDocList" style="margin:0; padding:8px 12px; font-size:11px; list-style:disc;"></ul>
+        </div>
+      </div>
+
+      <div class="field-row field-row-2">
+        <div class="field">
+          <label>AI Provider</label>
+          <select id="aiSummaryProvider"><option value="">— select —</option></select>
+        </div>
+        <div class="field">
+          <label>API Key</label>
+          <select id="aiSummaryKey"><option value="">— select provider first —</option></select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Model</label>
+        <select id="aiSummaryModel"><option value="">— select provider first —</option></select>
+      </div>
+      <div class="field hidden" id="aiSummaryCustomModelField">
+        <label>Custom Model ID</label>
+        <input type="text" id="aiSummaryCustomModel" placeholder="e.g. gpt-5.5-mini">
+      </div>
+
+      <div id="aiSummaryError" class="captcha-error hidden"></div>
+
+      <div class="action-row" style="margin-top:12px;">
+        <button class="btn-run" id="aiSummaryConfirmBtn">✨ Generate Summary</button>
+      </div>
+    </div>
+
+    <div class="hidden" id="aiSummaryResultWrap">
+      <div id="aiSummaryResultText" style="white-space:pre-wrap; max-height:340px; overflow:auto; border:1px solid var(--b1); border-radius:var(--r); padding:10px; font-size:12px; line-height:1.5;"></div>
+      <div class="action-row" style="margin-top:10px;">
+        <button class="btn-secondary" id="aiSummaryCopyBtn">📋 Copy</button>
+        <button class="btn-secondary" id="aiSummarySavePdfBtn">⬇ Save as PDF</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="manage-modal hidden" id="manageAiModal">
+  <div class="manage-box">
+    <div class="manage-box-title">
+      <span>🤖 Manage AI Provider API Keys</span>
+      <button class="captcha-close-btn" id="manageAiCloseBtn" title="Close">✕</button>
+    </div>
+    <div class="smtp-note" style="margin-bottom:8px;">
+      Keys are encrypted at rest and used only to call that provider's own API directly for the AI Summary feature in Notices — never sent anywhere else.
+    </div>
+
+    <div class="ai-provider-section">
+      <div class="section-label">Groq <button class="btn-xs btn-secondary ai-get-key-btn" data-url="https://console.groq.com/keys">Get API Key ↗</button></div>
+      <div class="ai-key-add-row">
+        <input type="text" class="ai-key-label" placeholder="Label (e.g. Main key)">
+        <input type="password" class="ai-key-input" placeholder="API key">
+        <button class="btn-xs btn-run ai-add-key-btn" data-provider="groq">+ Add</button>
+      </div>
+      <div class="manage-list-wrap">
+        <table>
+          <thead><tr><th>Label</th><th></th></tr></thead>
+          <tbody class="ai-keys-tbody" data-provider="groq"></tbody>
+        </table>
+        <div class="ai-keys-empty manage-empty text-muted hidden" data-provider="groq">No keys saved.</div>
+      </div>
+    </div>
+
+    <div class="ai-provider-section">
+      <div class="section-label">OpenAI <button class="btn-xs btn-secondary ai-get-key-btn" data-url="https://platform.openai.com/api-keys">Get API Key ↗</button></div>
+      <div class="ai-key-add-row">
+        <input type="text" class="ai-key-label" placeholder="Label (e.g. Main key)">
+        <input type="password" class="ai-key-input" placeholder="API key">
+        <button class="btn-xs btn-run ai-add-key-btn" data-provider="openai">+ Add</button>
+      </div>
+      <div class="manage-list-wrap">
+        <table>
+          <thead><tr><th>Label</th><th></th></tr></thead>
+          <tbody class="ai-keys-tbody" data-provider="openai"></tbody>
+        </table>
+        <div class="ai-keys-empty manage-empty text-muted hidden" data-provider="openai">No keys saved.</div>
+      </div>
+    </div>
+
+    <div class="ai-provider-section">
+      <div class="section-label">Anthropic <button class="btn-xs btn-secondary ai-get-key-btn" data-url="https://console.anthropic.com/settings/keys">Get API Key ↗</button></div>
+      <div class="ai-key-add-row">
+        <input type="text" class="ai-key-label" placeholder="Label (e.g. Main key)">
+        <input type="password" class="ai-key-input" placeholder="API key">
+        <button class="btn-xs btn-run ai-add-key-btn" data-provider="anthropic">+ Add</button>
+      </div>
+      <div class="manage-list-wrap">
+        <table>
+          <thead><tr><th>Label</th><th></th></tr></thead>
+          <tbody class="ai-keys-tbody" data-provider="anthropic"></tbody>
+        </table>
+        <div class="ai-keys-empty manage-empty text-muted hidden" data-provider="anthropic">No keys saved.</div>
+      </div>
+    </div>
+
+    <div class="ai-provider-section">
+      <div class="section-label">Gemini <button class="btn-xs btn-secondary ai-get-key-btn" data-url="https://aistudio.google.com/apikey">Get API Key ↗</button></div>
+      <div class="ai-key-add-row">
+        <input type="text" class="ai-key-label" placeholder="Label (e.g. Main key)">
+        <input type="password" class="ai-key-input" placeholder="API key">
+        <button class="btn-xs btn-run ai-add-key-btn" data-provider="gemini">+ Add</button>
+      </div>
+      <div class="manage-list-wrap">
+        <table>
+          <thead><tr><th>Label</th><th></th></tr></thead>
+          <tbody class="ai-keys-tbody" data-provider="gemini"></tbody>
+        </table>
+        <div class="ai-keys-empty manage-empty text-muted hidden" data-provider="gemini">No keys saved.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="manage-modal hidden" id="manageAccountsModal">
+  <div class="manage-box">
+    <div class="manage-box-title">
+      <span>🗄 Manage Saved Accounts</span>
+      <button class="captcha-close-btn" id="manageAccountsCloseBtn" title="Close">✕</button>
+    </div>
+    <div class="manage-bulk-row">
+      <button class="btn-xs btn-secondary" id="importCredsBtn">↑ Import</button>
+      <button class="btn-xs btn-secondary" id="exportCredsBtn">↓ Export</button>
+      <button class="btn-xs btn-danger" id="clearAllAccountsBtn">✕ Clear All</button>
+    </div>
+    <div class="manage-list-wrap">
+      <table>
+        <thead>
+          <tr><th>Label</th><th>Username</th><th>GSTIN</th><th>Email</th><th></th></tr>
+        </thead>
+        <tbody id="manageAccountsTbody"></tbody>
+      </table>
+      <div id="manageAccountsEmpty" class="manage-empty text-muted hidden">No saved accounts yet.</div>
+    </div>
   </div>
 </div>
 

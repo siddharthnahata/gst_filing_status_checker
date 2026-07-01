@@ -22,6 +22,15 @@ const state = {
   dlCaptchaReject:  null,
   dlBulkRunning:    false,
   dlAccountId:      null,  // set when a saved account is selected; cleared on manual edit
+
+  // Tab 3 — Notices
+  ntcSessionId:      null,
+  ntcCaptchaResolve: null,
+  ntcCaptchaReject:  null,
+  ntcAccountId:      null,  // set when a saved account is selected; cleared on manual edit
+  ntcNotices:        [],    // last-fetched notices, keyed by id for download lookups
+  ntcCaseDocsNoticeId: null, // notice id whose case-folder documents are shown in the modal
+  ntcCaseDocsList:     [],   // documents currently listed in the case docs modal
 };
 
 // ── API key error helpers ─────────────────────────────────────────────────────
@@ -48,7 +57,7 @@ const hide = id => $(id).classList.add('hidden');
 const val  = id => $(id).value.trim();
 
 function escHtml(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
@@ -295,35 +304,169 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 //  TAB 1 — FILING STATUS
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Captcha controller factory ────────────────────────────────────────────────
+// Tab 1 / Tab 2 / Tab 3 each drive an identical captcha modal flow (show →
+// wait for submit/cancel/refresh → resolve/reject), differing only in the
+// element-id prefix, which log function to use, an optional session-status
+// callback on success, and (Tab 1 only) preferring the last-used login
+// credentials over the current form fields when refreshing the captcha.
+function pid(prefix, name) {
+  const s = prefix + name;
+  return prefix ? s : s.charAt(0).toLowerCase() + s.slice(1);
+}
+
+function createCaptchaController(prefix, { log, onLoggedIn = () => {}, getCredentials } = {}) {
+  const imgId       = pid(prefix, 'CaptchaImg');
+  const inputId      = pid(prefix, 'CaptchaInput');
+  const submitBtnId  = pid(prefix, 'CaptchaSubmitBtn');
+  const refreshBtnId = pid(prefix, 'CaptchaRefreshBtn');
+  const cancelBtnId  = pid(prefix, 'CaptchaCancelBtn');
+  const errorId      = pid(prefix, 'CaptchaError');
+  const sectionId    = pid(prefix, 'CaptchaSection');
+  const usernameId   = pid(prefix, 'Username');
+  const passwordId   = pid(prefix, 'Password');
+  const sessionKey   = pid(prefix, 'SessionId');
+  const resolveKey   = pid(prefix, 'CaptchaResolve');
+  const rejectKey    = pid(prefix, 'CaptchaReject');
+
+  const readCredentials = getCredentials || (() => ({
+    username: val(usernameId),
+    password: $(passwordId).value,
+  }));
+
+  function open(base64) {
+    hide('manageAccountsModal'); // captcha must not be hidden behind an open modal
+    hide('caseDocsModal');
+    $(imgId).src = `data:image/png;base64,${base64}`;
+    $(inputId).value = '';
+    $(inputId).disabled = false;
+    $(submitBtnId).disabled = false;
+    $(errorId).classList.add('hidden');
+    show(sectionId);
+    // The login that triggers a captcha runs in the background, so the OS may
+    // have moved focus elsewhere by the time it's ready — pull the window back
+    // to the foreground so real keystrokes actually reach the input.
+    window.gstApp.focusWindow?.();
+    setTimeout(() => $(inputId).focus(), 100);
+  }
+
+  function close() {
+    hide(sectionId);
+    $(inputId).value = '';
+  }
+
+  function showError(msg) {
+    const el = $(errorId);
+    el.textContent = msg;
+    el.classList.remove('hidden');
+  }
+
+  function openAndWait(base64) {
+    open(base64);
+    return new Promise((resolve, reject) => {
+      state[resolveKey] = resolve;
+      state[rejectKey]  = reject;
+    });
+  }
+
+  async function refresh() {
+    $(refreshBtnId).disabled = true;
+    try {
+      const { username, password } = readCredentials();
+      const res = await window.gstApp.login({ endpoint: state.endpoint, apiKey: state.apiKey, username, password });
+      if (isApiKeyError(res)) {
+        const err = new ApiKeyError('API authentication error — try restarting the app.');
+        showError(err.message);
+        if (state[rejectKey]) { state[rejectKey](err); state[rejectKey] = null; }
+        return;
+      }
+      if (res.ok && res.data.captchaBase64) {
+        state[sessionKey] = res.data.sessionId;
+        open(res.data.captchaBase64);
+        log('Captcha refreshed.', 'info');
+      }
+    } catch (e) {
+      log(`Refresh failed: ${e.message}`, 'error');
+    } finally {
+      $(refreshBtnId).disabled = false;
+    }
+  }
+
+  function cancel() {
+    close();
+    if (state[rejectKey]) { state[rejectKey](new Error('Cancelled by user')); state[rejectKey] = null; }
+  }
+
+  async function submit() {
+    const captcha = val(inputId);
+    if (!captcha) { showError('Please enter the captcha.'); return; }
+
+    $(inputId).disabled = true;
+    $(submitBtnId).disabled = true;
+    $(errorId).classList.add('hidden');
+
+    const res = await window.gstApp.submitCaptcha({
+      endpoint: state.endpoint, apiKey: state.apiKey, sessionId: state[sessionKey], captcha,
+    });
+
+    if (isApiKeyError(res)) {
+      const err = new ApiKeyError('API authentication error — try restarting the app.');
+      showError(err.message);
+      if (state[rejectKey]) { state[rejectKey](err); state[rejectKey] = null; }
+      return;
+    }
+
+    if (!res.ok) {
+      showError(`Error: ${res.error || `HTTP ${res.httpStatus}`}`);
+      $(inputId).disabled = false;
+      $(submitBtnId).disabled = false;
+      return;
+    }
+
+    const d = res.data;
+
+    if (d.loggedIn) {
+      state[sessionKey] = d.sessionId || state[sessionKey];
+      const name = d.userInfo?.name || d.userInfo?.gstin || '';
+      log(`Captcha verified — logged in${name ? ` as ${name}` : ''}.`, 'ok');
+      window.gstApp.reportCaptcha({ captchaText: captcha, captchaBase64: $(imgId).src.split(',')[1] || $(imgId).src });
+      close();
+      onLoggedIn();
+      if (state[resolveKey]) { state[resolveKey](); state[resolveKey] = null; }
+      return;
+    }
+
+    if (d.needsCaptcha && d.captchaBase64) {
+      const err = d.errorMessage || 'Incorrect captcha. Please try again.';
+      log(err, 'warn');
+      showError(err);
+      open(d.captchaBase64);
+      return;
+    }
+
+    showError(`Unexpected response: ${JSON.stringify(d)}`);
+    $(inputId).disabled = false;
+    $(submitBtnId).disabled = false;
+  }
+
+  $(submitBtnId).addEventListener('click', submit);
+  $(inputId).addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  $(cancelBtnId).addEventListener('click', cancel);
+  $(refreshBtnId).addEventListener('click', refresh);
+
+  return { openAndWait, close };
+}
+
 // ── Tab 1 captcha ─────────────────────────────────────────────────────────────
-function showCaptcha(base64) {
-  $('captchaImg').src = `data:image/png;base64,${base64}`;
-  $('captchaInput').value = '';
-  $('captchaInput').disabled = false;
-  $('captchaSubmitBtn').disabled = false;
-  $('captchaError').classList.add('hidden');
-  show('captchaSection');
-  setTimeout(() => $('captchaInput').focus(), 100);
-}
-
-function hideCaptcha() {
-  hide('captchaSection');
-  $('captchaInput').value = '';
-}
-
-function showCaptchaError(msg) {
-  const el = $('captchaError');
-  el.textContent = msg;
-  el.classList.remove('hidden');
-}
-
-async function showCaptchaAndWait(base64) {
-  showCaptcha(base64);
-  return new Promise((resolve, reject) => {
-    state.captchaResolve = resolve;
-    state.captchaReject  = reject;
-  });
-}
+const tab1Captcha = createCaptchaController('', {
+  log: addLog,
+  getCredentials: () => ({
+    username: state.activeUsername || val('username'),
+    password: state.activePassword || $('password').value,
+  }),
+});
+function showCaptchaAndWait(base64) { return tab1Captcha.openAndWait(base64); }
+function hideCaptcha() { tab1Captcha.close(); }
 
 // ── Tab 1 login ───────────────────────────────────────────────────────────────
 async function doLogin(username, password) {
@@ -357,95 +500,6 @@ async function doLogin(username, password) {
   }
 
   throw new Error(`Unexpected login response: ${JSON.stringify(d)}`);
-}
-
-// ── Tab 1 captcha handlers ────────────────────────────────────────────────────
-$('captchaSubmitBtn').addEventListener('click', handleCaptchaSubmit);
-$('captchaInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleCaptchaSubmit(); });
-$('captchaCancelBtn').addEventListener('click', () => {
-  hideCaptcha();
-  if (state.captchaReject) { state.captchaReject(new Error('Cancelled by user')); state.captchaReject = null; }
-});
-
-$('captchaRefreshBtn').addEventListener('click', async () => {
-  $('captchaRefreshBtn').disabled = true;
-  try {
-    const res = await window.gstApp.login({
-      endpoint: state.endpoint,
-      apiKey:   state.apiKey,
-      username: state.activeUsername || val('username'),
-      password: state.activePassword || $('password').value,
-    });
-    if (isApiKeyError(res)) {
-      const err = new ApiKeyError('API authentication error — try restarting the app.');
-      showCaptchaError(err.message);
-      if (state.captchaReject) { state.captchaReject(err); state.captchaReject = null; }
-      return;
-    }
-    if (res.ok && res.data.captchaBase64) {
-      state.sessionId = res.data.sessionId;
-      showCaptcha(res.data.captchaBase64);
-      addLog('Captcha refreshed.', 'info');
-    }
-  } catch (e) {
-    addLog(`Refresh failed: ${e.message}`, 'error');
-  } finally {
-    $('captchaRefreshBtn').disabled = false;
-  }
-});
-
-async function handleCaptchaSubmit() {
-  const captcha = $('captchaInput').value.trim();
-  if (!captcha) { showCaptchaError('Please enter the captcha.'); return; }
-
-  $('captchaInput').disabled   = true;
-  $('captchaSubmitBtn').disabled = true;
-  $('captchaError').classList.add('hidden');
-
-  const res = await window.gstApp.submitCaptcha({
-    endpoint: state.endpoint,
-    apiKey:   state.apiKey,
-    sessionId: state.sessionId,
-    captcha,
-  });
-
-  if (isApiKeyError(res)) {
-    const err = new ApiKeyError('API authentication error — try restarting the app.');
-    showCaptchaError(err.message);
-    if (state.captchaReject) { state.captchaReject(err); state.captchaReject = null; }
-    return;
-  }
-
-  if (!res.ok) {
-    showCaptchaError(`Error: ${res.error || `HTTP ${res.httpStatus}`}`);
-    $('captchaInput').disabled   = false;
-    $('captchaSubmitBtn').disabled = false;
-    return;
-  }
-
-  const d = res.data;
-
-  if (d.loggedIn) {
-    state.sessionId = d.sessionId || state.sessionId;
-    const name = d.userInfo?.name || d.userInfo?.gstin || '';
-    addLog(`Captcha verified — logged in${name ? ` as ${name}` : ''}.`, 'ok');
-    window.gstApp.reportCaptcha({ captchaText: captcha, captchaBase64: $('captchaImg').src.split(',')[1] || $('captchaImg').src });
-    hideCaptcha();
-    if (state.captchaResolve) { state.captchaResolve(); state.captchaResolve = null; }
-    return;
-  }
-
-  if (d.needsCaptcha && d.captchaBase64) {
-    const err = d.errorMessage || 'Incorrect captcha. Please try again.';
-    addLog(err, 'warn');
-    showCaptchaError(err);
-    showCaptcha(d.captchaBase64);
-    return;
-  }
-
-  showCaptchaError(`Unexpected response: ${JSON.stringify(d)}`);
-  $('captchaInput').disabled   = false;
-  $('captchaSubmitBtn').disabled = false;
 }
 
 // ── Tab 1 re-authenticate mid-batch ──────────────────────────────────────────
@@ -507,7 +561,7 @@ async function runBatch() {
 
   const defaultUsername = val('username');
   const defaultPassword = $('password').value;
-  const hasPerRowCreds  = rows.some(r => r.username);
+  const hasPerRowCreds  = rows.some(r => r.username && r.password);
 
   // Build credential groups (preserving row order within each group)
   let groups;
@@ -586,8 +640,9 @@ async function runBatch() {
       updateSummaryCounts(filed, notFiled, errored, 0, invalid);
       appendResultRow(results.length, result);
 
-      if (i < group.rows.length - 1 && state.isRunning) {
-        await sleep(300 + Math.random() * 200);
+      if (i < group.rows.length - 1 && state.isRunning && seq % 50 === 0) {
+        addLog(`Pausing 3s after ${seq} checks…`, 'info');
+        await sleep(3000);
       }
     }
   }
@@ -644,6 +699,117 @@ function substituteTemplate(tpl, gstin, period, returnType) {
 
 function textToHtml(text) {
   return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+// ── Tab 2 — email the downloaded PDF to the client ────────────────────────────
+// Never throws — a failure here must not abort the surrounding download flow,
+// which still needs to offer the file for local saving either way.
+async function emailDownloadedFile({ filename, base64, gstin, period, returnType }) {
+  try {
+    if (!$('dlEmailEnabled').checked) return;
+
+    const to = val('dlEmailTo') || val('dlAccountEmail');
+    if (!to) { addDlLog('⚠ Email enabled but no recipient address set — skipped.', 'warn'); return; }
+
+    const smtpConfig = {
+      host: val('dlSmtpHost'), port: val('dlSmtpPort'), secure: $('dlSmtpSecure').value,
+      user: val('dlSmtpUser'), pass: $('dlSmtpPass').value, from: val('dlSmtpFrom'),
+    };
+    if (!smtpConfig.host || !smtpConfig.user || !smtpConfig.pass) {
+      addDlLog('⚠ Email enabled but SMTP settings are incomplete — skipped.', 'warn');
+      return;
+    }
+
+    const subject = substituteTemplate(val('dlEmailSubject') || 'Your {returnType} for {period}', gstin, period, returnType);
+    const bodyTxt = substituteTemplate($('dlEmailBody').value || 'Please find attached your {returnType} for {period}.\nGSTIN: {gstin}', gstin, period, returnType);
+
+    addDlLog(`Emailing ${filename} to ${to}…`, 'step');
+    const res = await window.gstApp.sendEmail({
+      smtpConfig, to, subject, text: bodyTxt, html: textToHtml(bodyTxt),
+      attachments: [{ filename, base64 }],
+    });
+    if (res.ok) addDlLog(`✉ Emailed to ${to}`, 'ok');
+    else        addDlLog(`✉ Email failed: ${res.error}`, 'error');
+  } catch (e) {
+    addDlLog(`✉ Email failed: ${e.message}`, 'error');
+  }
+}
+
+function substituteNoticeTemplate(tpl, { gstin, noticeId, description }) {
+  return (tpl || '')
+    .replace(/\{gstin\}/gi,      gstin || '')
+    .replace(/\{noticeId\}/gi,   noticeId || '')
+    .replace(/\{description\}/gi, description || '');
+}
+
+// ── Tab 3 — preview-and-confirm email modal ───────────────────────────────────
+let emailPreviewResolve = null;
+
+function showEmailPreview({ to, subject, body, attachmentName }) {
+  $('emailPreviewTo').textContent = to;
+  $('emailPreviewSubject').textContent = subject;
+  $('emailPreviewBody').textContent = body;
+  $('emailPreviewAttachment').textContent = attachmentName;
+  $('emailPreviewError').classList.add('hidden');
+  show('emailPreviewModal');
+  return new Promise((resolve) => { emailPreviewResolve = resolve; });
+}
+
+function resolveEmailPreview(sendIt) {
+  hide('emailPreviewModal');
+  if (emailPreviewResolve) { emailPreviewResolve(sendIt); emailPreviewResolve = null; }
+}
+
+$('emailPreviewSendBtn').addEventListener('click', () => resolveEmailPreview(true));
+$('emailPreviewCancelBtn').addEventListener('click', () => resolveEmailPreview(false));
+$('emailPreviewCloseBtn').addEventListener('click', () => resolveEmailPreview(false));
+$('emailPreviewModal').addEventListener('click', (e) => {
+  if (e.target.id === 'emailPreviewModal') resolveEmailPreview(false);
+});
+
+// ── Tab 3 — fetch a notice/case document, preview, and email it on confirm ───
+// downloadFn: async () => { ok, base64, filename, error } — fetches the file
+// (fresh or from cache). Never throws.
+async function emailWithConfirm(downloadFn, { gstin, noticeId, description }) {
+  addNtcLog('Preparing email…', 'step');
+  let result;
+  try {
+    result = await downloadFn();
+  } catch (e) {
+    result = { ok: false, error: e.message };
+  }
+  if (!result.ok) { addNtcLog(`Could not prepare email: ${result.error}`, 'error'); return; }
+
+  const to = val('ntcEmailTo') || val('ntcAccountEmail');
+  if (!to) { alert('No recipient email set. Enter one in "Send To" or save this account with an email address.'); return; }
+
+  const smtpConfig = {
+    host: val('ntcSmtpHost'), port: val('ntcSmtpPort'), secure: $('ntcSmtpSecure').value,
+    user: val('ntcSmtpUser'), pass: $('ntcSmtpPass').value, from: val('ntcSmtpFrom'),
+  };
+  if (!smtpConfig.host || !smtpConfig.user || !smtpConfig.pass) {
+    alert('SMTP settings are incomplete. Configure them in "Email Settings" first.');
+    return;
+  }
+
+  const ctx = { gstin, noticeId, description };
+  const subject = substituteNoticeTemplate(val('ntcEmailSubject') || 'GST Notice {noticeId}', ctx);
+  const bodyTxt = substituteNoticeTemplate($('ntcEmailBody').value || 'Please find attached a document for notice {noticeId}.\n{description}\nGSTIN: {gstin}', ctx);
+
+  const confirmed = await showEmailPreview({ to, subject, body: bodyTxt, attachmentName: result.filename });
+  if (!confirmed) { addNtcLog('Email cancelled.', 'info'); return; }
+
+  addNtcLog(`Emailing ${result.filename} to ${to}…`, 'step');
+  try {
+    const res = await window.gstApp.sendEmail({
+      smtpConfig, to, subject, text: bodyTxt, html: textToHtml(bodyTxt),
+      attachments: [{ filename: result.filename, base64: result.base64 }],
+    });
+    if (res.ok) addNtcLog(`✉ Emailed to ${to}`, 'ok');
+    else        addNtcLog(`✉ Email failed: ${res.error}`, 'error');
+  } catch (e) {
+    addNtcLog(`✉ Email failed: ${e.message}`, 'error');
+  }
 }
 
 async function sendEmails() {
@@ -737,7 +903,9 @@ $('runBtn').addEventListener('click', async () => {
   } catch (e) {
     addLog(`Fatal error: ${e.message}`, 'error');
     addLog('If this keeps happening, contact: siddharthnahata492@gmail.com', 'info');
-    window.gstApp.logError({ message: e.message, context: `filing-status | ${$('username').value} | ${$('month').value} ${$('year').value} | ${$('returnType').value}` });
+    if (e.message !== 'Cancelled by user') {
+      window.gstApp.logError({ message: e.message, context: `filing-status | ${$('month').value} ${$('year').value} | ${$('returnType').value}` });
+    }
     setStatus('Error', 'error');
     hideCaptcha();
     if (state.captchaReject) { state.captchaReject(e); state.captchaReject = null; }
@@ -817,34 +985,9 @@ function updateDlSessionStatus() {
 }
 
 // ── Tab 2 captcha ─────────────────────────────────────────────────────────────
-function showDlCaptcha(base64) {
-  $('dlCaptchaImg').src = `data:image/png;base64,${base64}`;
-  $('dlCaptchaInput').value = '';
-  $('dlCaptchaInput').disabled = false;
-  $('dlCaptchaSubmitBtn').disabled = false;
-  $('dlCaptchaError').classList.add('hidden');
-  show('dlCaptchaSection');
-  setTimeout(() => $('dlCaptchaInput').focus(), 100);
-}
-
-function hideDlCaptcha() {
-  hide('dlCaptchaSection');
-  $('dlCaptchaInput').value = '';
-}
-
-function showDlCaptchaError(msg) {
-  const el = $('dlCaptchaError');
-  el.textContent = msg;
-  el.classList.remove('hidden');
-}
-
-async function showDlCaptchaAndWait(base64) {
-  showDlCaptcha(base64);
-  return new Promise((resolve, reject) => {
-    state.dlCaptchaResolve = resolve;
-    state.dlCaptchaReject  = reject;
-  });
-}
+const dlCaptcha = createCaptchaController('dl', { log: addDlLog, onLoggedIn: updateDlSessionStatus });
+function showDlCaptchaAndWait(base64) { return dlCaptcha.openAndWait(base64); }
+function hideDlCaptcha() { dlCaptcha.close(); }
 
 // ── Tab 2 login ───────────────────────────────────────────────────────────────
 async function doDownloadLogin() {
@@ -889,95 +1032,6 @@ async function doDownloadLogin() {
   throw new Error(`Unexpected login response: ${JSON.stringify(d)}`);
 }
 
-// ── Tab 2 captcha handlers ────────────────────────────────────────────────────
-$('dlCaptchaSubmitBtn').addEventListener('click', handleDlCaptchaSubmit);
-$('dlCaptchaInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleDlCaptchaSubmit(); });
-$('dlCaptchaCancelBtn').addEventListener('click', () => {
-  hideDlCaptcha();
-  if (state.dlCaptchaReject) { state.dlCaptchaReject(new Error('Cancelled by user')); state.dlCaptchaReject = null; }
-});
-
-$('dlCaptchaRefreshBtn').addEventListener('click', async () => {
-  $('dlCaptchaRefreshBtn').disabled = true;
-  try {
-    const res = await window.gstApp.login({
-      endpoint: state.endpoint,
-      apiKey:   state.apiKey,
-      username: val('dlUsername'),
-      password: $('dlPassword').value,
-    });
-    if (isApiKeyError(res)) {
-      const err = new ApiKeyError('API authentication error — try restarting the app.');
-      showDlCaptchaError(err.message);
-      if (state.dlCaptchaReject) { state.dlCaptchaReject(err); state.dlCaptchaReject = null; }
-      return;
-    }
-    if (res.ok && res.data.captchaBase64) {
-      state.dlSessionId = res.data.sessionId;
-      showDlCaptcha(res.data.captchaBase64);
-      addDlLog('Captcha refreshed.', 'info');
-    }
-  } catch (e) {
-    addDlLog(`Refresh failed: ${e.message}`, 'error');
-  } finally {
-    $('dlCaptchaRefreshBtn').disabled = false;
-  }
-});
-
-async function handleDlCaptchaSubmit() {
-  const captcha = $('dlCaptchaInput').value.trim();
-  if (!captcha) { showDlCaptchaError('Please enter the captcha.'); return; }
-
-  $('dlCaptchaInput').disabled    = true;
-  $('dlCaptchaSubmitBtn').disabled = true;
-  $('dlCaptchaError').classList.add('hidden');
-
-  const res = await window.gstApp.submitCaptcha({
-    endpoint:  state.endpoint,
-    apiKey:    state.apiKey,
-    sessionId: state.dlSessionId,
-    captcha,
-  });
-
-  if (isApiKeyError(res)) {
-    const err = new ApiKeyError('API authentication error — try restarting the app.');
-    showDlCaptchaError(err.message);
-    if (state.dlCaptchaReject) { state.dlCaptchaReject(err); state.dlCaptchaReject = null; }
-    return;
-  }
-
-  if (!res.ok) {
-    showDlCaptchaError(`Error: ${res.error || `HTTP ${res.httpStatus}`}`);
-    $('dlCaptchaInput').disabled    = false;
-    $('dlCaptchaSubmitBtn').disabled = false;
-    return;
-  }
-
-  const d = res.data;
-
-  if (d.loggedIn) {
-    state.dlSessionId = d.sessionId || state.dlSessionId;
-    const name = d.userInfo?.name || d.userInfo?.gstin || '';
-    addDlLog(`Captcha verified — logged in${name ? ` as ${name}` : ''}.`, 'ok');
-    window.gstApp.reportCaptcha({ captchaText: captcha, captchaBase64: $('dlCaptchaImg').src.split(',')[1] || $('dlCaptchaImg').src });
-    hideDlCaptcha();
-    updateDlSessionStatus();
-    if (state.dlCaptchaResolve) { state.dlCaptchaResolve(); state.dlCaptchaResolve = null; }
-    return;
-  }
-
-  if (d.needsCaptcha && d.captchaBase64) {
-    const err = d.errorMessage || 'Incorrect captcha. Please try again.';
-    addDlLog(err, 'warn');
-    showDlCaptchaError(err);
-    showDlCaptcha(d.captchaBase64);
-    return;
-  }
-
-  showDlCaptchaError(`Unexpected response: ${JSON.stringify(d)}`);
-  $('dlCaptchaInput').disabled    = false;
-  $('dlCaptchaSubmitBtn').disabled = false;
-}
 
 // ── Login & Download button ───────────────────────────────────────────────────
 $('dlLoginDownloadBtn').addEventListener('click', async () => {
@@ -1010,6 +1064,7 @@ $('dlLoginDownloadBtn').addEventListener('click', async () => {
     const financialYear = getDownloadFY(month, year);
     const returnPeriod  = getReturnPeriod(month, year);
     const periodLabel   = `${month} ${year}`;
+    const forceRefresh  = $('dlForceRefresh').checked;
 
     addDlLog(`Downloading ${returnType} for ${periodLabel} (FY ${financialYear}, period ${returnPeriod})…`, 'step');
     statusEl.textContent = `Requesting ${returnType} PDF for ${periodLabel}…`;
@@ -1023,6 +1078,7 @@ $('dlLoginDownloadBtn').addEventListener('click', async () => {
       returnType,
       financialYear,
       returnPeriod,
+      forceRefresh,
     });
 
     throwIfApiKeyError(res);
@@ -1035,7 +1091,7 @@ $('dlLoginDownloadBtn').addEventListener('click', async () => {
       await doDownloadLogin();
       res = await window.gstApp.downloadPdf({
         endpoint: state.endpoint, apiKey: state.apiKey,
-        sessionId: state.dlSessionId, returnType, financialYear, returnPeriod,
+        sessionId: state.dlSessionId, returnType, financialYear, returnPeriod, forceRefresh,
       });
       throwIfApiKeyError(res);
     }
@@ -1059,9 +1115,15 @@ $('dlLoginDownloadBtn').addEventListener('click', async () => {
       return;
     }
 
+    const dlFilename = d.filename || `${returnType}_${returnPeriod}.pdf`;
+    await emailDownloadedFile({
+      filename: dlFilename, base64: d.base64,
+      gstin: val('dlAccountGstin'), period: periodLabel, returnType,
+    });
+
     const saveRes = await window.gstApp.savePdf({
       base64:      d.base64,
-      defaultName: d.filename || `${returnType}_${returnPeriod}.pdf`,
+      defaultName: dlFilename,
     });
 
     if (saveRes.canceled) {
@@ -1072,8 +1134,9 @@ $('dlLoginDownloadBtn').addEventListener('click', async () => {
 
     if (saveRes.ok) {
       const sizeKb = d.size ? Math.round(d.size / 1024) : Math.round(d.base64.length * 0.75 / 1024);
-      addDlLog(`✓ Saved: ${saveRes.filePath} (${sizeKb} KB)`, 'ok');
-      statusEl.textContent = `✓ Saved ${d.filename || 'return.pdf'} (${sizeKb} KB)`;
+      const cacheNote = d.cached ? ' (from cache)' : '';
+      addDlLog(`✓ Saved: ${saveRes.filePath} (${sizeKb} KB)${cacheNote}`, 'ok');
+      statusEl.textContent = `✓ Saved ${d.filename || 'return.pdf'} (${sizeKb} KB)${cacheNote}`;
       statusEl.className   = 'dl-status ok';
       window.gstApp.openFile(saveRes.filePath);
     } else {
@@ -1087,7 +1150,9 @@ $('dlLoginDownloadBtn').addEventListener('click', async () => {
       addDlLog(`Error: ${e.message}`, 'error');
     }
     addDlLog('If this keeps happening, contact: siddharthnahata492@gmail.com', 'info');
-    window.gstApp.logError({ message: e.message, context: `download | ${val('dlUsername')} | ${$('dlReturnType').value} | ${$('dlMonth').value} ${$('dlYear').value}` });
+    if (e.message !== 'Cancelled by user') {
+      window.gstApp.logError({ message: e.message, context: `download | ${$('dlReturnType').value} | ${$('dlMonth').value} ${$('dlYear').value}` });
+    }
     statusEl.textContent = `✗ ${e.message}`;
     statusEl.className   = 'dl-status error';
     show('dlStatus');
@@ -1141,7 +1206,8 @@ $('dlBulkDownloadBtn').addEventListener('click', async () => {
   const startYear  = parseInt($('dlBulkStartYear').value);
   const endMonth   = $('dlBulkEndMonth').value;
   const endYear    = parseInt($('dlBulkEndYear').value);
-  const returnType = $('dlBulkReturnType').value;
+  const returnType   = $('dlBulkReturnType').value;
+  const forceRefresh = $('dlBulkForceRefresh').checked;
 
   const periods = getMonthRange(startMonth, startYear, endMonth, endYear);
   if (!periods.length) { alert('Invalid date range — "From" must be before or equal to "To".'); return; }
@@ -1188,7 +1254,7 @@ $('dlBulkDownloadBtn').addEventListener('click', async () => {
 
       let res = await window.gstApp.downloadPdf({
         endpoint: state.endpoint, apiKey: state.apiKey,
-        sessionId: state.dlSessionId, returnType, financialYear, returnPeriod,
+        sessionId: state.dlSessionId, returnType, financialYear, returnPeriod, forceRefresh,
       });
 
       throwIfApiKeyError(res);
@@ -1201,7 +1267,7 @@ $('dlBulkDownloadBtn').addEventListener('click', async () => {
         await doDownloadLogin();
         res = await window.gstApp.downloadPdf({
           endpoint: state.endpoint, apiKey: state.apiKey,
-          sessionId: state.dlSessionId, returnType, financialYear, returnPeriod,
+          sessionId: state.dlSessionId, returnType, financialYear, returnPeriod, forceRefresh,
         });
         throwIfApiKeyError(res);
       }
@@ -1215,8 +1281,9 @@ $('dlBulkDownloadBtn').addEventListener('click', async () => {
         const filename = d.filename || `${returnType}_${monthAbbr}${year}.pdf`;
         collected.push({ name: filename, base64: d.base64 });
         downloaded++;
+        const cacheNote = d.cached ? ' (cached)' : '';
         const kb = Math.round(d.base64.length * 0.75 / 1024);
-        addDlLog(`  → ✓ ${filename} (${kb} KB)`, 'ok');
+        addDlLog(`  → ✓ ${filename} (${kb} KB)${cacheNote}`, 'ok');
       } else {
         failed++;
         addDlLog(`  → Error: ${d.error || d.message || `HTTP ${res.httpStatus}`}`, 'error');
@@ -1246,6 +1313,12 @@ $('dlBulkDownloadBtn').addEventListener('click', async () => {
     if (saveRes.ok) {
       addDlLog(`✓ ZIP saved: ${saveRes.filePath} (${saveRes.count} files)`, 'ok');
       window.gstApp.openFile(saveRes.filePath);
+      if (saveRes.zipBase64) {
+        await emailDownloadedFile({
+          filename: defaultName, base64: saveRes.zipBase64,
+          gstin: val('dlAccountGstin'), period: `${startMonth} ${startYear} to ${endMonth} ${endYear}`, returnType,
+        });
+      }
     } else {
       throw new Error(saveRes.error);
     }
@@ -1254,7 +1327,9 @@ $('dlBulkDownloadBtn').addEventListener('click', async () => {
     if (e.name === 'ApiKeyError') addDlLog(e.message, 'error');
     else addDlLog(`Error: ${e.message}`, 'error');
     addDlLog('If this keeps happening, contact: siddharthnahata492@gmail.com', 'info');
-    window.gstApp.logError({ message: e.message, context: `bulk-download | ${val('dlUsername')} | ${$('dlBulkReturnType').value}` });
+    if (e.message !== 'Cancelled by user') {
+      window.gstApp.logError({ message: e.message, context: `bulk-download | ${$('dlBulkReturnType').value}` });
+    }
     hideDlCaptcha();
     if (state.dlCaptchaReject) { state.dlCaptchaReject(e); state.dlCaptchaReject = null; }
   } finally {
@@ -1289,6 +1364,628 @@ $('dlLogoutBtn').addEventListener('click', async () => {
     $('dlLogoutBtn').disabled = false;
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  TAB 3 — NOTICES
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Tab 3 logging ─────────────────────────────────────────────────────────────
+function addNtcLog(msg, level = 'info') {
+  const log = $('ntcLog');
+  log.appendChild(_makeLogLine(msg, level));
+  log.scrollTop = log.scrollHeight;
+}
+
+// ── Tab 3 session status ──────────────────────────────────────────────────────
+function updateNtcSessionStatus() {
+  const el = $('ntcSessionStatus');
+  if (!el) return;
+  if (state.ntcSessionId) {
+    el.textContent = '● Session active';
+    el.className   = 'dl-session-status active';
+  } else {
+    el.textContent = '● No active session';
+    el.className   = 'dl-session-status inactive';
+  }
+}
+
+// ── Tab 3 captcha ─────────────────────────────────────────────────────────────
+const ntcCaptcha = createCaptchaController('ntc', { log: addNtcLog, onLoggedIn: updateNtcSessionStatus });
+function showNtcCaptchaAndWait(base64) { return ntcCaptcha.openAndWait(base64); }
+function hideNtcCaptcha() { ntcCaptcha.close(); }
+
+// ── Tab 3 login ───────────────────────────────────────────────────────────────
+async function doNtcLogin() {
+  const endpoint = state.endpoint;
+  const apiKey   = state.apiKey;
+  const username = val('ntcUsername');
+
+  let password;
+  if (state.ntcAccountId) {
+    const pwRes = await window.gstApp.getAccountPassword({ id: state.ntcAccountId });
+    if (!pwRes.ok) throw new Error('Could not decrypt saved password — please re-select the account or enter the password manually.');
+    password = pwRes.password.trim();
+  } else {
+    password = $('ntcPassword').value.trim();
+  }
+
+  if (!username || !password) throw new Error('Enter the client username and password first.');
+
+  addNtcLog(`Logging in as "${username}"…`, 'step');
+  const res = await window.gstApp.login({ endpoint, apiKey, username, password });
+  throwIfApiKeyError(res);
+
+  if (!res.ok) throw new Error(`Login failed: ${res.error || `HTTP ${res.httpStatus}`}`);
+
+  const d = res.data;
+  state.ntcSessionId = d.sessionId;
+
+  if (d.loggedIn) {
+    const name = d.userInfo?.name || d.userInfo?.gstin || '';
+    addNtcLog(`Logged in successfully${name ? ` — ${name}` : ''}.`, 'ok');
+    updateNtcSessionStatus();
+    return;
+  }
+
+  if (d.needsCaptcha && d.captchaBase64) {
+    addNtcLog('Captcha required — enter it on the right.', 'warn');
+    await showNtcCaptchaAndWait(d.captchaBase64);
+    updateNtcSessionStatus();
+    return;
+  }
+
+  throw new Error(`Unexpected login response: ${JSON.stringify(d)}`);
+}
+
+// ── Notices table rendering ───────────────────────────────────────────────────
+function renderNoticesTable(notices) {
+  state.ntcNotices = notices;
+  const tbody = $('noticesTbody');
+  tbody.innerHTML = '';
+  for (const n of notices) {
+    const tr = document.createElement('tr');
+    let actionHtml = '<span class="text-muted" style="font-size:11px;">—</span>';
+    if (n.source === 'order') {
+      actionHtml = `<button class="btn-xs btn-secondary ntc-download-order" data-id="${escHtml(n.id)}">↓ Download</button>
+        <button class="btn-xs btn-secondary ntc-email-order" data-id="${escHtml(n.id)}" title="Email this document">✉</button>`;
+    } else if (n.source === 'case') {
+      actionHtml = `<button class="btn-xs btn-secondary ntc-view-case" data-id="${escHtml(n.id)}">📁 View Documents</button>
+        <button class="btn-xs btn-secondary ntc-ai-summary" data-id="${escHtml(n.id)}" title="AI Summary">✨</button>`;
+    }
+    tr.innerHTML = `
+      <td style="font-family:var(--fm);font-size:11px;">${escHtml(n.id)}</td>
+      <td style="font-size:11px;">${escHtml(n.type || '—')}</td>
+      <td style="font-size:11px;">${escHtml(n.description || '—')}</td>
+      <td style="font-size:11px;">${escHtml(n.dateOfIssue || '—')}</td>
+      <td style="font-size:11px;">${escHtml(n.dueDate || '—')}</td>
+      <td style="font-size:11px;">${escHtml(n.status || '—')}</td>
+      <td style="font-family:var(--fm);font-size:11px;">${escHtml(n.arn || '—')}</td>
+      <td>${actionHtml}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+  show('noticesSection');
+}
+
+$('noticesTbody').addEventListener('click', async (e) => {
+  const downloadBtn = e.target.closest('.ntc-download-order');
+  const viewBtn     = e.target.closest('.ntc-view-case');
+  const aiBtn       = e.target.closest('.ntc-ai-summary');
+
+  if (downloadBtn) {
+    const notice = state.ntcNotices.find(n => n.id === downloadBtn.dataset.id);
+    if (!notice) return;
+    downloadBtn.disabled = true;
+    const origText = downloadBtn.textContent;
+    downloadBtn.textContent = 'Downloading…';
+    try {
+      const res = await window.gstApp.downloadOrderNotice({
+        endpoint: state.endpoint, apiKey: state.apiKey, sessionId: state.ntcSessionId,
+        docId: notice.refs?.docId, applnId: notice.refs?.applnId,
+      });
+      throwIfApiKeyError(res);
+      if (!res.ok || !res.data?.base64) throw new Error(res.error || res.data?.error || `HTTP ${res.httpStatus}`);
+      const defaultName = `notice_${notice.id}.pdf`;
+      const saveRes = await window.gstApp.saveNoticeFile({ base64: res.data.base64, defaultName });
+      if (saveRes.canceled) { addNtcLog('Save cancelled.', 'info'); return; }
+      if (saveRes.ok) {
+        addNtcLog(`✓ Saved: ${saveRes.filePath}`, 'ok');
+        window.gstApp.openFile(saveRes.filePath);
+      } else {
+        throw new Error(saveRes.error);
+      }
+    } catch (err) {
+      addNtcLog(`Download failed: ${err.message}`, 'error');
+    } finally {
+      downloadBtn.disabled = false;
+      downloadBtn.textContent = origText;
+    }
+    return;
+  }
+
+  const emailBtn = e.target.closest('.ntc-email-order');
+  if (emailBtn) {
+    const notice = state.ntcNotices.find(n => n.id === emailBtn.dataset.id);
+    if (!notice) return;
+    emailBtn.disabled = true;
+    try {
+      await emailWithConfirm(async () => {
+        const res = await window.gstApp.downloadOrderNotice({
+          endpoint: state.endpoint, apiKey: state.apiKey, sessionId: state.ntcSessionId,
+          docId: notice.refs?.docId, applnId: notice.refs?.applnId,
+        });
+        throwIfApiKeyError(res);
+        if (!res.ok || !res.data?.base64) return { ok: false, error: res.error || res.data?.error || `HTTP ${res.httpStatus}` };
+        return { ok: true, base64: res.data.base64, filename: `notice_${notice.id}.pdf` };
+      }, { gstin: val('ntcAccountGstin'), noticeId: notice.id, description: notice.description });
+    } finally {
+      emailBtn.disabled = false;
+    }
+    return;
+  }
+
+  if (viewBtn) {
+    const notice = state.ntcNotices.find(n => n.id === viewBtn.dataset.id);
+    if (!notice) return;
+    viewBtn.disabled = true;
+    const origText = viewBtn.textContent;
+    viewBtn.textContent = 'Loading…';
+    try {
+      const res = await window.gstApp.getCaseDocuments({
+        endpoint: state.endpoint, apiKey: state.apiKey, sessionId: state.ntcSessionId,
+        caseId: notice.refs?.caseId, arn: notice.arn, caseTypeCd: notice.refs?.caseTypeCd,
+      });
+      throwIfApiKeyError(res);
+      if (!res.ok) throw new Error(res.error || `HTTP ${res.httpStatus}`);
+      openCaseDocsModal(notice, res.data?.documents || []);
+    } catch (err) {
+      addNtcLog(`Could not list case documents: ${err.message}`, 'error');
+    } finally {
+      viewBtn.disabled = false;
+      viewBtn.textContent = origText;
+    }
+    return;
+  }
+
+  if (aiBtn) {
+    const notice = state.ntcNotices.find(n => n.id === aiBtn.dataset.id);
+    if (!notice) return;
+    aiBtn.disabled = true;
+    const origText = aiBtn.textContent;
+    aiBtn.textContent = '…';
+    try {
+      const res = await window.gstApp.getCaseDocuments({
+        endpoint: state.endpoint, apiKey: state.apiKey, sessionId: state.ntcSessionId,
+        caseId: notice.refs?.caseId, arn: notice.arn, caseTypeCd: notice.refs?.caseTypeCd,
+      });
+      throwIfApiKeyError(res);
+      if (!res.ok) throw new Error(res.error || `HTTP ${res.httpStatus}`);
+      await openAiSummaryModal(notice, res.data?.documents || []);
+    } catch (err) {
+      addNtcLog(`Could not list case documents: ${err.message}`, 'error');
+    } finally {
+      aiBtn.disabled = false;
+      aiBtn.textContent = origText;
+    }
+  }
+});
+
+// ── Case documents modal ──────────────────────────────────────────────────────
+function openCaseDocsModal(notice, documents) {
+  state.ntcCaseDocsNoticeId = notice.id;
+  state.ntcCaseDocsList     = documents;
+  $('caseDocsTitle').textContent = `📁 Case Documents — ${notice.id}`;
+  const tbody = $('caseDocsTbody');
+  tbody.innerHTML = '';
+  for (const d of documents) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-size:11px;">${escHtml(d.docName)}</td>
+      <td style="font-size:11px;">${escHtml(d.contentType || d.docType || '—')}</td>
+      <td>
+        <button class="btn-xs btn-secondary case-doc-download" data-notice-id="${escHtml(notice.id)}" data-doc-name="${escHtml(d.docName)}" data-folder="${escHtml(d.folder || '')}">↓ Download</button>
+        <button class="btn-xs btn-secondary case-doc-email" data-notice-id="${escHtml(notice.id)}" data-doc-name="${escHtml(d.docName)}" data-folder="${escHtml(d.folder || '')}" title="Email this document">✉</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+  $('caseDocsEmpty').classList.toggle('hidden', documents.length > 0);
+  $('caseDocsDownloadAllBtn').disabled = documents.length === 0;
+  show('caseDocsModal');
+}
+
+// Fetch one case document's base64 payload. Returns { ok, base64, filename, error }.
+async function fetchCaseDocument(noticeId, docName, folder) {
+  try {
+    const res = await window.gstApp.downloadCaseDocument({
+      endpoint: state.endpoint, apiKey: state.apiKey, sessionId: state.ntcSessionId,
+      id: noticeId, docName, folder,
+    });
+    throwIfApiKeyError(res);
+    if (!res.ok || !res.data?.base64) throw new Error(res.error || res.data?.error || `HTTP ${res.httpStatus}`);
+    return { ok: true, base64: res.data.base64, filename: res.data.filename || docName };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+$('caseDocsCloseBtn').addEventListener('click', () => hide('caseDocsModal'));
+$('caseDocsModal').addEventListener('click', (e) => {
+  if (e.target.id === 'caseDocsModal') hide('caseDocsModal');
+});
+$('caseDocsTbody').addEventListener('click', async (e) => {
+  const downloadBtn = e.target.closest('.case-doc-download');
+  const emailBtn    = e.target.closest('.case-doc-email');
+
+  if (downloadBtn) {
+    const { noticeId, docName, folder } = downloadBtn.dataset;
+    downloadBtn.disabled = true;
+    const origText = downloadBtn.textContent;
+    downloadBtn.textContent = 'Downloading…';
+    try {
+      const result = await fetchCaseDocument(noticeId, docName, folder);
+      if (!result.ok) throw new Error(result.error);
+      const saveRes = await window.gstApp.saveNoticeFile({ base64: result.base64, defaultName: result.filename });
+      if (saveRes.canceled) { addNtcLog('Save cancelled.', 'info'); return; }
+      if (saveRes.ok) {
+        addNtcLog(`✓ Saved: ${saveRes.filePath}`, 'ok');
+        window.gstApp.openFile(saveRes.filePath);
+      } else {
+        throw new Error(saveRes.error);
+      }
+    } catch (err) {
+      addNtcLog(`Document download failed: ${err.message}`, 'error');
+    } finally {
+      downloadBtn.disabled = false;
+      downloadBtn.textContent = origText;
+    }
+    return;
+  }
+
+  if (emailBtn) {
+    const { noticeId, docName, folder } = emailBtn.dataset;
+    emailBtn.disabled = true;
+    try {
+      const notice = state.ntcNotices.find(n => n.id === noticeId);
+      await emailWithConfirm(
+        () => fetchCaseDocument(noticeId, docName, folder),
+        { gstin: val('ntcAccountGstin'), noticeId, description: notice?.description },
+      );
+    } finally {
+      emailBtn.disabled = false;
+    }
+  }
+});
+
+// Downloads every listed case document in sequence. Returns the successfully
+// fetched files (for zipping) and a count of any that failed along the way.
+async function downloadAllCaseDocs(noticeId, documents, onProgress) {
+  const files = [];
+  let failed = 0;
+  for (let i = 0; i < documents.length; i++) {
+    const d = documents[i];
+    if (onProgress) onProgress(i, documents.length);
+    addNtcLog(`Downloading "${d.docName}" (${i + 1}/${documents.length})…`, 'step');
+    const result = await fetchCaseDocument(noticeId, d.docName, d.folder);
+    if (result.ok) {
+      files.push({ name: result.filename, base64: result.base64 });
+    } else {
+      failed++;
+      addNtcLog(`Failed to download "${d.docName}": ${result.error}`, 'error');
+    }
+  }
+  return { files, failed };
+}
+
+$('caseDocsDownloadAllBtn').addEventListener('click', async () => {
+  const noticeId  = state.ntcCaseDocsNoticeId;
+  const documents = state.ntcCaseDocsList;
+  if (!noticeId || !documents.length) return;
+
+  const btn = $('caseDocsDownloadAllBtn');
+  btn.disabled = true;
+  const origText = btn.textContent;
+
+  const { files, failed } = await downloadAllCaseDocs(noticeId, documents, (i, total) => {
+    btn.textContent = `Downloading ${i + 1}/${total}…`;
+  });
+
+  btn.disabled = false;
+  btn.textContent = origText;
+
+  if (!files.length) {
+    addNtcLog('No documents were downloaded — nothing to zip.', 'error');
+    return;
+  }
+
+  const defaultName = `case_${noticeId}_documents.zip`;
+  const saveRes = await window.gstApp.saveZip({ files, defaultName });
+  if (saveRes.canceled) { addNtcLog('Save cancelled.', 'info'); return; }
+  if (saveRes.ok) {
+    const note = failed ? ` (${failed} document${failed === 1 ? '' : 's'} failed)` : '';
+    addNtcLog(`✓ Saved ZIP: ${saveRes.filePath} — ${files.length} document${files.length === 1 ? '' : 's'}${note}`, 'ok');
+    window.gstApp.openFile(saveRes.filePath);
+  } else {
+    addNtcLog(`ZIP save failed: ${saveRes.error}`, 'error');
+  }
+});
+
+$('caseDocsEmailAllBtn').addEventListener('click', async () => {
+  const noticeId  = state.ntcCaseDocsNoticeId;
+  const documents = state.ntcCaseDocsList;
+  if (!noticeId || !documents.length) return;
+
+  const btn = $('caseDocsEmailAllBtn');
+  btn.disabled = true;
+  try {
+    const notice = state.ntcNotices.find(n => n.id === noticeId);
+    await emailWithConfirm(async () => {
+      const { files, failed } = await downloadAllCaseDocs(noticeId, documents, (i, total) => {
+        btn.textContent = `Downloading ${i + 1}/${total}…`;
+      });
+      if (!files.length) return { ok: false, error: 'No documents could be downloaded.' };
+      const zipRes = await window.gstApp.zipToBase64({ files });
+      if (!zipRes.ok) return { ok: false, error: zipRes.error };
+      if (failed) addNtcLog(`${failed} document${failed === 1 ? '' : 's'} failed to download and won't be in the ZIP.`, 'warn');
+      return { ok: true, base64: zipRes.base64, filename: `case_${noticeId}_documents.zip` };
+    }, { gstin: val('ntcAccountGstin'), noticeId, description: notice?.description });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✉ Email All';
+  }
+});
+
+// ── AI Summary modal ───────────────────────────────────────────────────────────
+const AI_PROVIDER_LABELS = { groq: 'Groq', openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini' };
+const AI_MODEL_CATALOG = {
+  anthropic: ['claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5', 'claude-fable-5'],
+  gemini:    ['gemini-3.5-flash'],
+  openai:    ['gpt-5.5'],
+  groq:      ['llama-3.3-70b-versatile'],
+};
+
+async function openAiSummaryModal(notice, documents) {
+  state.aiSummaryNotice = notice;
+  state.aiSummaryDocs   = documents;
+
+  $('aiSummaryNoticeId').textContent = notice.id;
+  $('aiSummaryDocCount').textContent = documents.length;
+  const docList = $('aiSummaryDocList');
+  docList.innerHTML = documents.length
+    ? documents.map(d => `<li>${escHtml(d.docName)}</li>`).join('')
+    : '<li class="text-muted">No documents found in this case folder.</li>';
+
+  $('aiSummaryError').classList.add('hidden');
+  $('aiSummaryResultWrap').classList.add('hidden');
+  $('aiSummarySetup').classList.remove('hidden');
+  $('aiSummaryConfirmBtn').disabled = documents.length === 0;
+
+  await loadAiKeys();
+  const provider = $('aiSummaryProvider');
+  provider.innerHTML = '<option value="">— select —</option>' + AI_PROVIDERS
+    .filter(p => (aiKeys[p] || []).length > 0)
+    .map(p => `<option value="${p}">${AI_PROVIDER_LABELS[p]}</option>`)
+    .join('');
+  $('aiSummaryKey').innerHTML = '<option value="">— select provider first —</option>';
+  $('aiSummaryModel').innerHTML = '<option value="">— select provider first —</option>';
+  $('aiSummaryCustomModelField').classList.add('hidden');
+
+  if (!provider.options.length || (provider.options.length === 1 && !provider.options[0].value)) {
+    $('aiSummaryError').textContent = 'No AI provider keys saved yet — add one via "Manage AI" first.';
+    $('aiSummaryError').classList.remove('hidden');
+  }
+
+  show('aiSummaryModal');
+}
+
+function populateAiKeyAndModelDropdowns() {
+  const provider = val('aiSummaryProvider');
+  const keySel = $('aiSummaryKey');
+  const modelSel = $('aiSummaryModel');
+
+  const keys = provider ? (aiKeys[provider] || []) : [];
+  keySel.innerHTML = keys.length
+    ? keys.map(k => `<option value="${escHtml(k.id)}">${escHtml(k.label)}</option>`).join('')
+    : '<option value="">— no keys for this provider —</option>';
+
+  const models = provider ? (AI_MODEL_CATALOG[provider] || []) : [];
+  modelSel.innerHTML = (models.length ? models.map(m => `<option value="${m}">${m}</option>`).join('') : '')
+    + '<option value="__custom__">Custom model ID…</option>';
+  if (!provider) modelSel.innerHTML = '<option value="">— select provider first —</option>';
+
+  $('aiSummaryCustomModelField').classList.add('hidden');
+}
+$('aiSummaryProvider').addEventListener('change', populateAiKeyAndModelDropdowns);
+$('aiSummaryModel').addEventListener('change', () => {
+  $('aiSummaryCustomModelField').classList.toggle('hidden', val('aiSummaryModel') !== '__custom__');
+});
+
+$('aiSummaryCloseBtn').addEventListener('click', () => hide('aiSummaryModal'));
+$('aiSummaryModal').addEventListener('click', (e) => {
+  if (e.target.id === 'aiSummaryModal') hide('aiSummaryModal');
+});
+
+$('aiSummaryConfirmBtn').addEventListener('click', async () => {
+  const provider = val('aiSummaryProvider');
+  const apiKeyId = val('aiSummaryKey');
+  const modelSel = val('aiSummaryModel');
+  const model = modelSel === '__custom__' ? val('aiSummaryCustomModel') : modelSel;
+
+  const errEl = $('aiSummaryError');
+  errEl.classList.add('hidden');
+  if (!provider) { errEl.textContent = 'Select an AI provider.'; errEl.classList.remove('hidden'); return; }
+  if (!apiKeyId) { errEl.textContent = 'Select an API key.'; errEl.classList.remove('hidden'); return; }
+  if (!model)    { errEl.textContent = 'Select or enter a model.'; errEl.classList.remove('hidden'); return; }
+
+  const notice = state.aiSummaryNotice;
+  const documents = state.aiSummaryDocs || [];
+  const btn = $('aiSummaryConfirmBtn');
+  btn.disabled = true;
+  const origText = btn.textContent;
+  try {
+    btn.textContent = 'Downloading documents…';
+    const { files, failed } = await downloadAllCaseDocs(notice.id, documents, (i, total) => {
+      btn.textContent = `Downloading ${i + 1}/${total}…`;
+    });
+    if (!files.length) throw new Error('No documents could be downloaded to summarize.');
+    if (failed) addNtcLog(`${failed} document${failed === 1 ? '' : 's'} failed to download and won't be included in the summary.`, 'warn');
+
+    btn.textContent = 'Generating summary…';
+    const res = await window.gstApp.aiSummarize({
+      provider, model, apiKeyId,
+      documents: files.map(f => ({ filename: f.name, base64: f.base64 })),
+      noticeContext: { gstin: val('ntcAccountGstin'), noticeId: notice.id, description: notice.description },
+    });
+    if (!res.ok) throw new Error(res.error);
+
+    state.aiSummaryText = res.summary;
+    $('aiSummaryResultText').textContent = res.summary;
+    $('aiSummarySetup').classList.add('hidden');
+    $('aiSummaryResultWrap').classList.remove('hidden');
+    addNtcLog(`✨ AI summary generated for ${notice.id}`, 'ok');
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+});
+
+$('aiSummaryCopyBtn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(state.aiSummaryText || '');
+    addNtcLog('Summary copied to clipboard.', 'info');
+  } catch (e) {
+    addNtcLog(`Copy failed: ${e.message}`, 'error');
+  }
+});
+
+$('aiSummarySavePdfBtn').addEventListener('click', async () => {
+  const btn = $('aiSummarySavePdfBtn');
+  btn.disabled = true;
+  const origText = btn.textContent;
+  btn.textContent = 'Generating PDF…';
+  try {
+    const notice = state.aiSummaryNotice;
+    const genRes = await window.gstApp.generateSummaryPdf({
+      text: state.aiSummaryText || '',
+      title: `AI Summary — Notice ${notice?.id || ''}`,
+    });
+    if (!genRes.ok) throw new Error(genRes.error);
+    const saveRes = await window.gstApp.saveNoticeFile({
+      base64: genRes.base64,
+      defaultName: `ai_summary_${notice?.id || 'notice'}.pdf`,
+    });
+    if (saveRes.canceled) { addNtcLog('Save cancelled.', 'info'); return; }
+    if (saveRes.ok) {
+      addNtcLog(`✓ Saved: ${saveRes.filePath}`, 'ok');
+      window.gstApp.openFile(saveRes.filePath);
+    } else {
+      throw new Error(saveRes.error);
+    }
+  } catch (err) {
+    addNtcLog(`Save as PDF failed: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+});
+
+// ── Login & Fetch Notices button ──────────────────────────────────────────────
+$('ntcLoginFetchBtn').addEventListener('click', async () => {
+  if (!state.endpoint) { alert('Local API not ready. Please wait a moment and try again.'); return; }
+
+  $('ntcLoginFetchBtn').disabled = true;
+  $('ntcLogoutBtn').disabled     = true;
+
+  const statusEl = $('ntcStatus');
+
+  try {
+    if (!state.ntcSessionId) {
+      if (!val('ntcUsername') || !$('ntcPassword').value) {
+        alert('Enter the client username and password first.');
+        return;
+      }
+      addNtcLog('Checking endpoint…', 'step');
+      const health = await window.gstApp.healthCheck({ endpoint: state.endpoint });
+      if (!health.ok) throw new Error(`Cannot reach API — ${health.error || `HTTP ${health.httpStatus}`}`);
+
+      await doNtcLogin();
+    }
+
+    addNtcLog('Fetching notices…', 'step');
+    statusEl.textContent = 'Fetching notices…';
+    statusEl.className   = 'dl-status pending';
+    show('ntcStatus');
+
+    let res = await window.gstApp.getNotices({
+      endpoint: state.endpoint, apiKey: state.apiKey, sessionId: state.ntcSessionId, section: 'both',
+    });
+    throwIfApiKeyError(res);
+
+    if (!res.ok && isSessionExpiredResponse(res)) {
+      addNtcLog('Session expired — re-authenticating…', 'warn');
+      state.ntcSessionId = null;
+      updateNtcSessionStatus();
+      await doNtcLogin();
+      res = await window.gstApp.getNotices({
+        endpoint: state.endpoint, apiKey: state.apiKey, sessionId: state.ntcSessionId, section: 'both',
+      });
+      throwIfApiKeyError(res);
+    }
+
+    if (!res.ok) throw new Error(res.error || `HTTP ${res.httpStatus}`);
+
+    const notices = res.data?.notices || [];
+    renderNoticesTable(notices);
+    addNtcLog(`✓ Found ${notices.length} notice${notices.length === 1 ? '' : 's'}.`, 'ok');
+    statusEl.textContent = `✓ ${notices.length} notice${notices.length === 1 ? '' : 's'} found.`;
+    statusEl.className   = 'dl-status ok';
+
+  } catch (e) {
+    if (e.name === 'ApiKeyError') {
+      addNtcLog(e.message, 'error');
+    } else {
+      addNtcLog(`Error: ${e.message}`, 'error');
+    }
+    addNtcLog('If this keeps happening, contact: siddharthnahata492@gmail.com', 'info');
+    if (e.message !== 'Cancelled by user') {
+      window.gstApp.logError({ message: e.message, context: 'notices' });
+    }
+    statusEl.textContent = `✗ ${e.message}`;
+    statusEl.className   = 'dl-status error';
+    show('ntcStatus');
+    hideNtcCaptcha();
+    if (state.ntcCaptchaReject) { state.ntcCaptchaReject(e); state.ntcCaptchaReject = null; }
+  } finally {
+    $('ntcLoginFetchBtn').disabled = false;
+    $('ntcLogoutBtn').disabled     = false;
+    updateNtcSessionStatus();
+  }
+});
+
+// ── Logout (Tab 3) ────────────────────────────────────────────────────────────
+$('ntcLogoutBtn').addEventListener('click', async () => {
+  if (!state.ntcSessionId) { updateNtcSessionStatus(); return; }
+  $('ntcLogoutBtn').disabled = true;
+  try {
+    await window.gstApp.logout({ endpoint: state.endpoint, apiKey: state.apiKey, sessionId: state.ntcSessionId });
+    state.ntcSessionId = null;
+    addNtcLog('Logged out of client GST session.', 'info');
+  } catch (_) {
+    state.ntcSessionId = null;
+  } finally {
+    updateNtcSessionStatus();
+    $('ntcLogoutBtn').disabled = false;
+  }
+});
+
+$('ntcSavedAccounts').addEventListener('change', () => onAccountSelect('ntcSavedAccounts', 'ntcUsername', 'ntcPassword', 'ntcAccountGstin', 'ntcAccountEmail'));
+$('ntcSaveAccountBtn').addEventListener('click', () => saveAccount(addNtcLog, 'ntcUsername', 'ntcPassword', 'ntcAccountGstin', 'ntcAccountEmail'));
+$('ntcDeleteAccountBtn').addEventListener('click', () => deleteAccount('ntcSavedAccounts', addNtcLog));
+$('ntcUsername').addEventListener('input', () => { state.ntcAccountId = null; });
+$('ntcPassword').addEventListener('input', () => { state.ntcAccountId = null; });
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  SHARED — health-check, file picker, SMTP sync, config, year dropdowns
@@ -1359,19 +2056,44 @@ $('smtpPort').addEventListener('change', () => {
   if (opt) $('smtpSecure').value = p;
 });
 
+$('dlSmtpSecure').addEventListener('change', () => { $('dlSmtpPort').value = $('dlSmtpSecure').value; });
+$('dlSmtpPort').addEventListener('change', () => {
+  const p = val('dlSmtpPort');
+  const opt = [...$('dlSmtpSecure').options].find(o => o.value === p);
+  if (opt) $('dlSmtpSecure').value = p;
+});
+
+$('ntcSmtpSecure').addEventListener('change', () => { $('ntcSmtpPort').value = $('ntcSmtpSecure').value; });
+$('ntcSmtpPort').addEventListener('change', () => {
+  const p = val('ntcSmtpPort');
+  const opt = [...$('ntcSmtpSecure').options].find(o => o.value === p);
+  if (opt) $('ntcSmtpSecure').value = p;
+});
+
 $('month').addEventListener('change', updateFYDisplay);
 $('year').addEventListener('change', updateFYDisplay);
 $('returnType').addEventListener('change', syncMonthToReturnType);
 $('dlMonth').addEventListener('change', updateDlFYDisplay);
 $('dlYear').addEventListener('change', updateDlFYDisplay);
 
+// ── Tab 2 download-mode toggle (Single Period / Bulk Range) ──────────────────
+function syncDownloadMode() {
+  const mode = $('dlMode').value;
+  $('dlSingleSection').classList.toggle('hidden', mode !== 'single');
+  $('dlBulkSection').classList.toggle('hidden', mode !== 'bulk');
+}
+$('dlMode').addEventListener('change', syncDownloadMode);
+
 // ── Config persistence ────────────────────────────────────────────────────────
 const PERSIST_FIELDS = [
   'username',
   'smtpHost','smtpPort','smtpSecure','smtpUser','smtpFrom','emailSubject','emailBody',
   'month','year','returnType',
-  'dlUsername','dlReturnType','dlMonth','dlYear',
+  'dlUsername','dlMode','dlReturnType','dlMonth','dlYear',
   'dlBulkReturnType','dlBulkStartMonth','dlBulkStartYear','dlBulkEndMonth','dlBulkEndYear',
+  'dlSmtpHost','dlSmtpPort','dlSmtpSecure','dlSmtpUser','dlSmtpFrom','dlEmailSubject','dlEmailBody','dlEmailTo',
+  'ntcUsername',
+  'ntcSmtpHost','ntcSmtpPort','ntcSmtpSecure','ntcSmtpUser','ntcSmtpFrom','ntcEmailSubject','ntcEmailBody','ntcEmailTo',
 ];
 
 async function loadSavedConfig() {
@@ -1415,7 +2137,7 @@ let savedAccounts = [];
 
 async function loadAccounts() {
   savedAccounts = await window.gstApp.listAccounts();
-  for (const selId of ['savedAccounts', 'dlSavedAccounts']) {
+  for (const selId of ['savedAccounts', 'dlSavedAccounts', 'ntcSavedAccounts']) {
     const sel = $(selId);
     if (!sel) continue;
     const prev = sel.value;
@@ -1428,12 +2150,32 @@ async function loadAccounts() {
     }
     if (prev) sel.value = prev;
   }
+  renderManageAccountsList();
+}
+
+function renderManageAccountsList() {
+  const tbody = $('manageAccountsTbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  for (const acc of savedAccounts) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escHtml(acc.label)}</td>
+      <td style="font-family:var(--fm);font-size:11px;">${escHtml(acc.username)}</td>
+      <td style="font-family:var(--fm);font-size:11px;">${escHtml(acc.gstin || '—')}</td>
+      <td style="font-size:11px;">${escHtml(acc.email || '—')}</td>
+      <td><button class="btn-icon btn-icon-danger manage-row-delete" data-id="${escHtml(acc.id)}" title="Delete account">✕</button></td>
+    `;
+    tbody.appendChild(tr);
+  }
+  $('manageAccountsEmpty').classList.toggle('hidden', savedAccounts.length > 0);
 }
 
 async function onAccountSelect(selId, usernameId, passwordId, gstinId, emailId) {
   const id = $(selId).value;
   if (!id) {
-    if (selId === 'dlSavedAccounts') state.dlAccountId = null;
+    if (selId === 'dlSavedAccounts')  state.dlAccountId  = null;
+    if (selId === 'ntcSavedAccounts') state.ntcAccountId = null;
     return;
   }
   const acc = savedAccounts.find(a => a.id === id);
@@ -1444,9 +2186,11 @@ async function onAccountSelect(selId, usernameId, passwordId, gstinId, emailId) 
   const res = await window.gstApp.getAccountPassword({ id });
   if (res.ok) {
     $(passwordId).value = res.password.trim();
-    if (selId === 'dlSavedAccounts') state.dlAccountId = id;
+    if (selId === 'dlSavedAccounts')  state.dlAccountId  = id;
+    if (selId === 'ntcSavedAccounts') state.ntcAccountId = id;
   } else {
-    if (selId === 'dlSavedAccounts') state.dlAccountId = null;
+    if (selId === 'dlSavedAccounts')  state.dlAccountId  = null;
+    if (selId === 'ntcSavedAccounts') state.ntcAccountId = null;
     addDlLog('⚠ Could not decrypt password for this account — enter it manually.', 'warn');
   }
 }
@@ -1462,23 +2206,30 @@ async function saveAccount(logFn, usernameId, passwordId, gstinId, emailId) {
     await loadAccounts();
     $('savedAccounts').value    = res.id;
     $('dlSavedAccounts').value  = res.id;
+    $('ntcSavedAccounts').value = res.id;
     logFn(`Account "${username}" saved.`, 'ok');
   } else {
     alert(`Failed to save account: ${res.error}`);
   }
 }
 
-async function deleteAccount(selId, logFn) {
-  const id = $(selId).value;
-  if (!id) { alert('Select a saved account to delete.'); return; }
+async function deleteAccountById(id, logFn) {
   const acc = savedAccounts.find(a => a.id === id);
   if (!acc) return;
   if (!confirm(`Delete saved account "${acc.label}"?`)) return;
   const res = await window.gstApp.deleteAccount({ id });
   if (res.ok) {
+    if (state.dlAccountId === id)  state.dlAccountId  = null;
+    if (state.ntcAccountId === id) state.ntcAccountId = null;
     await loadAccounts();
     logFn(`Account "${acc.label}" deleted.`, 'info');
   }
+}
+
+async function deleteAccount(selId, logFn) {
+  const id = $(selId).value;
+  if (!id) { alert('Select a saved account to delete.'); return; }
+  await deleteAccountById(id, logFn);
 }
 
 // ── Credential import / export ────────────────────────────────────────────────
@@ -1507,6 +2258,11 @@ async function exportCredentials() {
   const all = await window.gstApp.exportAllAccounts();
   if (all.error) { addLog(`Export failed: ${all.error}`, 'error'); return; }
 
+  const failedLabels = all.filter(a => a.decryptFailed).map(a => a.label);
+  if (failedLabels.length) {
+    addLog(`⚠ Could not decrypt the password for: ${failedLabels.join(', ')} — exported with a blank password.`, 'warn');
+  }
+
   const data = all.map(a => ({ Label: a.label, Username: a.username, Password: a.password, GSTIN: a.gstin, Email: a.email }));
   const res  = await window.gstApp.saveExcel({ data, defaultName: 'gst_accounts.xlsx' });
   if (res.canceled) return;
@@ -1526,6 +2282,8 @@ $('clearAllAccountsBtn').addEventListener('click', async () => {
   if (!confirmed) return;
   const res = await window.gstApp.clearAllAccounts();
   if (res.ok) {
+    state.dlAccountId  = null;
+    state.ntcAccountId = null;
     await loadAccounts();
     addLog('All saved accounts deleted.', 'warn');
   } else {
@@ -1540,27 +2298,115 @@ $('deleteAccountBtn').addEventListener('click', () => deleteAccount('savedAccoun
 $('dlSavedAccounts').addEventListener('change', () => onAccountSelect('dlSavedAccounts', 'dlUsername', 'dlPassword', 'dlAccountGstin', 'dlAccountEmail'));
 $('dlSaveAccountBtn').addEventListener('click', () => saveAccount(addDlLog, 'dlUsername', 'dlPassword', 'dlAccountGstin', 'dlAccountEmail'));
 $('dlDeleteAccountBtn').addEventListener('click', () => deleteAccount('dlSavedAccounts', addDlLog));
+
+function openManageAccountsModal() {
+  renderManageAccountsList();
+  show('manageAccountsModal');
+}
+$('manageAccountsBtn').addEventListener('click', openManageAccountsModal);
+$('manageAccountsCloseBtn').addEventListener('click', () => hide('manageAccountsModal'));
+$('manageAccountsModal').addEventListener('click', (e) => {
+  if (e.target.id === 'manageAccountsModal') hide('manageAccountsModal');
+});
+$('manageAccountsTbody').addEventListener('click', (e) => {
+  const btn = e.target.closest('.manage-row-delete');
+  if (!btn) return;
+  deleteAccountById(btn.dataset.id, addLog);
+});
+
 $('dlUsername').addEventListener('input', () => { state.dlAccountId = null; });
 $('dlPassword').addEventListener('input', () => { state.dlAccountId = null; });
 
-// ── Local API status bar ──────────────────────────────────────────────────────
+// ── Manage AI provider keys ────────────────────────────────────────────────────
+const AI_PROVIDERS = ['groq', 'openai', 'anthropic', 'gemini'];
+let aiKeys = { groq: [], openai: [], anthropic: [], gemini: [] };
+
+async function loadAiKeys() {
+  try { aiKeys = await window.gstApp.listAiKeys(); } catch (_) { /* keep previous */ }
+}
+
+function renderAiKeysList() {
+  for (const provider of AI_PROVIDERS) {
+    const tbody = document.querySelector(`.ai-keys-tbody[data-provider="${provider}"]`);
+    const empty = document.querySelector(`.ai-keys-empty[data-provider="${provider}"]`);
+    if (!tbody) continue;
+    tbody.innerHTML = '';
+    const list = aiKeys[provider] || [];
+    for (const k of list) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escHtml(k.label)}</td>
+        <td><button class="btn-icon btn-icon-danger ai-key-delete" data-provider="${provider}" data-id="${escHtml(k.id)}" title="Delete key">✕</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+    if (empty) empty.classList.toggle('hidden', list.length > 0);
+  }
+}
+
+async function openManageAiModal() {
+  await loadAiKeys();
+  renderAiKeysList();
+  show('manageAiModal');
+}
+$('manageAiBtn').addEventListener('click', openManageAiModal);
+$('manageAiCloseBtn').addEventListener('click', () => hide('manageAiModal'));
+$('manageAiModal').addEventListener('click', (e) => {
+  if (e.target.id === 'manageAiModal') hide('manageAiModal');
+});
+
+$('manageAiModal').addEventListener('click', async (e) => {
+  const getKeyBtn = e.target.closest('.ai-get-key-btn');
+  if (getKeyBtn) {
+    window.gstApp.openExternal(getKeyBtn.dataset.url);
+    return;
+  }
+
+  const addBtn = e.target.closest('.ai-add-key-btn');
+  if (addBtn) {
+    const provider = addBtn.dataset.provider;
+    const section = addBtn.closest('.ai-provider-section');
+    const labelInput = section.querySelector('.ai-key-label');
+    const keyInput = section.querySelector('.ai-key-input');
+    const apiKey = keyInput.value.trim();
+    if (!apiKey) { alert('Enter an API key first.'); return; }
+    addBtn.disabled = true;
+    try {
+      const res = await window.gstApp.saveAiKey({ provider, label: labelInput.value.trim(), apiKey });
+      if (res.ok) {
+        labelInput.value = '';
+        keyInput.value = '';
+        await loadAiKeys();
+        renderAiKeysList();
+      } else {
+        alert(`Could not save key: ${res.error}`);
+      }
+    } finally {
+      addBtn.disabled = false;
+    }
+    return;
+  }
+
+  const delBtn = e.target.closest('.ai-key-delete');
+  if (delBtn) {
+    await window.gstApp.deleteAiKey({ provider: delBtn.dataset.provider, id: delBtn.dataset.id });
+    await loadAiKeys();
+    renderAiKeysList();
+  }
+});
+
+// ── Local API status ──────────────────────────────────────────────────────────
 async function initLocalApi() {
-  const dot   = $('localApiDot');
-  const label = $('localApiLabel');
   try {
     const port = await window.gstApp.getLocalApiPort();
     if (port) {
       state.endpoint = `http://127.0.0.1:${port}`;
       state.apiKey   = null;
-      dot.className  = 'local-api-dot ready';
-      label.textContent = `Local API ready — port ${port}`;
     } else {
-      dot.className  = 'local-api-dot error';
-      label.textContent = 'Local API failed to start — restart the app';
+      setStatus('Local API failed to start — restart the app', 'error');
     }
   } catch (e) {
-    dot.className  = 'local-api-dot error';
-    label.textContent = `Local API error: ${e.message}`;
+    setStatus(`Local API error: ${e.message}`, 'error');
   }
 }
 
@@ -1571,6 +2417,7 @@ async function initLocalApi() {
   await loadAccounts();
   await initLocalApi();
   syncMonthToReturnType();
+  syncDownloadMode();
   updateFYDisplay();
   updateDlFYDisplay();
   updateDlSessionStatus();
@@ -1584,6 +2431,12 @@ async function initLocalApi() {
     $('appVersionLabel').textContent    = `v${appVersion}`;
   }
 
+  $('debugModeToggle').checked = await window.gstApp.getDebugMode();
+  $('debugModeToggle').addEventListener('change', async (e) => {
+    await window.gstApp.setDebugMode({ enabled: e.target.checked });
+    alert(`Debug diagnostics ${e.target.checked ? 'enabled' : 'disabled'} — restart the app for this to take effect.`);
+  });
+
   function compareSemver(a, b) {
     const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
     for (let i = 0; i < 3; i++) { if (pa[i] !== pb[i]) return pa[i] - pb[i]; }
@@ -1591,7 +2444,7 @@ async function initLocalApi() {
   }
 
   window.gstApp.onUpdateStatus(data => {
-    if (appVersion && compareSemver(data.version, appVersion) <= 0) return; // stale cache, ignore
+    if (data.version && appVersion && compareSemver(data.version, appVersion) <= 0) return; // stale cache, ignore
     if (data.type === 'available') {
       $('updateBannerText').textContent = `Update v${data.version} is downloading in the background…`;
       show('updateBanner');
@@ -1601,6 +2454,10 @@ async function initLocalApi() {
     } else if (data.type === 'ready') {
       $('updateBannerText').textContent = `v${data.version} ready to install.`;
       $('updateRestartBtn').style.display = '';
+      show('updateBanner');
+    } else if (data.type === 'error') {
+      $('updateBannerText').textContent = `Update failed — will retry later.`;
+      $('updateRestartBtn').style.display = 'none';
       show('updateBanner');
     }
   });
