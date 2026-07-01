@@ -140,7 +140,7 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 
 // Return type classification
 const ANNUAL_RETURN_TYPES    = new Set(['GSTR9', 'GSTR9C', 'GSTR4']);
-const QUARTERLY_RETURN_TYPES = new Set(['GSTR1Q']);
+const QUARTERLY_RETURN_TYPES = new Set(['GSTR1Q', 'CMP08']);
 const QUARTER_END_MONTHS     = new Set(['June', 'September', 'December', 'March']);
 
 function getFinancialYear(month, year) {
@@ -257,9 +257,11 @@ function findMatchingEntry(filingStatus, targetMonth, returnType) {
   const flat = filingStatus.flat(Infinity).filter(Boolean);
 
   // Annual returns use taxp: "Annual" — month is irrelevant
+  // GSTR4 option maps to GSTR4X in the API (composition annual return)
   if (ANNUAL_RETURN_TYPES.has(returnType)) {
+    const annualTypes = returnType === 'GSTR4' ? ['GSTR4', 'GSTR4X'] : [returnType];
     return flat.find(e =>
-      e.rtntype === returnType &&
+      annualTypes.includes(e.rtntype) &&
       (e.taxp || '').toLowerCase() === 'annual' &&
       e.status === 'Filed'
     ) || null;
